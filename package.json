@@ -1,0 +1,25 @@
+{
+  "name": "raw-data-processor",
+  "version": "1.0.0",
+  "description": "processor",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HenryZuo/raw-data-processor.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/HenryZuo/raw-data-processor/issues"
+  },
+  "homepage": "https://github.com/HenryZuo/raw-data-processor#readme",
+  "dependencies": {
+    "date-fns": "^4.1.0",
+    "zod": "^4.1.13"
+  }
+}
