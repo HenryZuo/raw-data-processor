@@ -1,0 +1,18 @@
+### Build/artifacts ###
+dist/
+node_modules/
+
+### Environment / credential files ###
+.env
+.env.*
+.secret
+secret.*
+config/*.secret
+
+### Platform-specific ###
+.DS_Store
+
+### Misc ###
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
