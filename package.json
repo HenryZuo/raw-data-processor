@@ -4,6 +4,7 @@
   "description": "processor",
   "main": "index.js",
   "scripts": {
+    "process-datathistle": "node --loader ts-node/esm src/process-datathistle.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -13,13 +14,18 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
+  "type": "module",
   "bugs": {
     "url": "https://github.com/HenryZuo/raw-data-processor/issues"
   },
   "homepage": "https://github.com/HenryZuo/raw-data-processor#readme",
   "dependencies": {
     "date-fns": "^4.1.0",
-    "zod": "^4.1.13"
+    "zod": "^4.1.13",
+    "playwright": "^1.45.0"
+  },
+  "devDependencies": {
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
   }
 }
