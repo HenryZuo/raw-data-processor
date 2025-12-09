@@ -4,7 +4,8 @@
   "description": "processor",
   "main": "index.js",
   "scripts": {
-    "process-datathistle": "node --loader ts-node/esm src/process-datathistle.ts",
+    "build": "tsc --project tsconfig.json",
+    "process-datathistle": "npm run build && node dist/raw-data-processor/src/main.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
