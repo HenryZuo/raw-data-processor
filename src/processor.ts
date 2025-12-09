@@ -4,17 +4,36 @@ import { mapAddressToAreas, activitySchema } from './schema-loader.js';
 import { resolveOfficialUrl } from './url-resolver.js';
 import { getOfficialUrlAndContent } from './scraper.js';
 import { fetchLLMDataWithRetries, ActivityLLMOutput } from './llm.js';
-import { extractOpeningHours, addMinutesToTime, resolveCoordinates, buildAddressLine, isBookingDomain, USER_AGENT_STRINGS } from './utils.js';
+import {
+  extractOpeningHours,
+  addMinutesToTime,
+  resolveCoordinates,
+  buildAddressLine,
+  isBookingDomain,
+  USER_AGENT_STRINGS,
+  formatExportTimestamp,
+  sanitizeNameForFilename,
+} from './utils.js';
 import type { PageScrapeResult, SourceEvent, SourceSchedule, SourcePerformance } from './types.js';
-import type { Activity, Dates } from '../../london-kids-p1/packages/shared/src/activity.js';
-import type { LondonArea } from '../../london-kids-p1/packages/shared/src/areas.js';
+import type {
+  Activity,
+  Dates,
+  Location as SharedLocation,
+} from '../../london-kids-p1/packages/shared/src/activity.js';
 
 const SCRAPE_LOG_DIR = path.resolve(process.cwd(), 'scrape-logs');
 
-async function exportScrapedContent(eventId: string, page: PageScrapeResult): Promise<void> {
+async function exportScrapedContent(
+  eventId: string,
+  eventName: string,
+  page: PageScrapeResult,
+  pageIndex: number,
+): Promise<void> {
   try {
     await fs.mkdir(SCRAPE_LOG_DIR, { recursive: true });
-    const filename = `scrape-${eventId}--${Date.now()}.json`;
+    const timestamp = formatExportTimestamp();
+    const nameSegment = sanitizeNameForFilename(eventName);
+    const filename = `scrape-${timestamp}-${nameSegment}-p${pageIndex + 1}.json`;
     const payload = {
       eventId,
       url: page.url,
@@ -119,6 +138,7 @@ export async function processEvents(events: SourceEvent[], groqApiKey: string) {
     console.log(`Processing ${event.event_id}: ${event.name}`);
     const statuses = createTaskStatuses();
     const logAndContinue = () => logTaskStatuses(event.event_id, statuses);
+    let scrapedOfficialUrl: string | null = null;
 
     const place = event.schedules?.[0]?.place;
     if (!place) {
@@ -128,8 +148,8 @@ export async function processEvents(events: SourceEvent[], groqApiKey: string) {
       continue;
     }
 
-    const officialUrl = await resolveOfficialUrl(event);
-    if (!officialUrl) {
+  const officialUrl = await resolveOfficialUrl(event);
+  if (!officialUrl) {
       setTaskStatus(statuses, 0, 'fail', 'no official descriptive URL found');
       logAndContinue();
       skipped.push({ id: event.event_id, reason: 'no official descriptive URL found' });
@@ -137,6 +157,7 @@ export async function processEvents(events: SourceEvent[], groqApiKey: string) {
     }
     setTaskStatus(statuses, 0, 'success', 'URL identified');
     console.log(`[${event.event_id}] Step 1: identified official URL ${officialUrl}`);
+    scrapedOfficialUrl = officialUrl;
 
     let startUrl = officialUrl;
     try {
@@ -158,8 +179,8 @@ export async function processEvents(events: SourceEvent[], groqApiKey: string) {
     console.log(
       `[${event.event_id}] Step 2: scraped official content (${scrapedPages.length} page(s), ${scrapedPages[0].text.length} chars first page)`,
     );
-    for (const page of scrapedPages) {
-      await exportScrapedContent(event.event_id, page);
+    for (const [index, page] of scrapedPages.entries()) {
+      await exportScrapedContent(event.event_id, event.name, page, index);
     }
 
     const rawScheduleSummary = describeRawSchedules(event);
@@ -200,7 +221,7 @@ export async function processEvents(events: SourceEvent[], groqApiKey: string) {
     }
 
     try {
-      const activity = await buildActivity(event, llmData, officialUrl, scrapedPages);
+    const activity = await buildActivity(event, llmData, officialUrl, scrapedPages, scrapedOfficialUrl);
       if (!activity) {
         setTaskStatus(statuses, 4, 'fail', 'no valid dates');
         logAndContinue();
@@ -234,90 +255,99 @@ async function buildActivity(
   llmData: ActivityLLMOutput,
   officialUrl: string,
   scrapedPages: PageScrapeResult[],
+  scrapedOfficialUrl: string | null,
 ): Promise<Activity | null> {
   const place = event.schedules?.[0]?.place;
   const coords = await resolveCoordinates(place);
   const addressLine = buildAddressLine(place);
-  const areas = mapAddressToAreas(addressLine) as [LondonArea, ...LondonArea[]];
-  const area = areas[areas.length - 1] ?? 'Greater London';
+  const areaCandidates = mapAddressToAreas(addressLine);
+  const area = areaCandidates[areaCandidates.length - 1] ?? 'Greater London';
   const imageUrl = event.images?.[0]?.url;
+  const location: SharedLocation = {
+    addressLine,
+    postcode: place?.postal_code ?? '',
+    city: place?.town ?? 'London',
+    country: 'United Kingdom',
+    lat: coords.lat,
+    lng: coords.lng,
+    area,
+  };
 
-  const dates = computeDatesFromRules(event, llmData, scrapedPages);
+  const dates = computeDatesFromRules(event, llmData, scrapedPages, location);
   if (!dates) {
     return null;
   }
 
-  const activity: Activity = {
+  let bestUrl = scrapedOfficialUrl || officialUrl;
+  if (scrapedPages.length > 0) {
+    const bestPage = scrapedPages.reduce((prev, curr) => (curr.url.length > prev.url.length ? curr : prev));
+    if (bestPage.url.length > bestUrl.length + 10) {
+      bestUrl = bestPage.url;
+    }
+  }
+
+  const baseActivity = {
     id: `${event.event_id}--${llmData.type}`,
     name: event.name,
-    type: llmData.type,
     summary: llmData.summary,
-    priceLevel: '££',
+    priceLevel: '££' as const,
     age: {
       officialAgeAvailable: llmData.officialAgeAvailable,
       minAge: llmData.minAge,
       maxAge: llmData.maxAge,
     },
-    location: {
-      addressLine,
-      postcode: place?.postal_code ?? '',
-      city: place?.town ?? 'London',
-      country: 'United Kingdom',
-      lat: coords.lat,
-      lng: coords.lng,
-      area,
-    },
-    dates,
-    url: officialUrl,
+    url: bestUrl,
     source: 'datathistle',
     lastUpdate: new Date().toISOString(),
     keywords: llmData.keywords,
     labels: llmData.labels,
     imageUrl,
-    areas,
   };
 
-  return activity;
+  if (llmData.type === 'event') {
+    if (dates.kind !== 'event') {
+      return null;
+    }
+    return { ...baseActivity, dates } as Activity;
+  }
+
+  if (dates.kind === 'event') {
+    return null;
+  }
+
+  return { ...baseActivity, dates } as Activity;
 }
 
 function computeDatesFromRules(
   event: SourceEvent,
   llmData: ActivityLLMOutput,
   scrapedPages: PageScrapeResult[],
+  location: SharedLocation,
 ): Dates | null {
-  const isEvent = llmData.type === 'event';
-  const isPlace = llmData.type === 'place';
-  if (isEvent) {
-    const performances = event.schedules?.flatMap((schedule) => schedule.performances ?? []) ?? [];
-    const instances = performances
-      .filter((performance): performance is SourcePerformance & { ts: string } => Boolean(performance.ts))
-      .map((performance) => {
-        const [datePart, timePart] = performance.ts.split('T');
-        if (!datePart || !timePart) {
-          return null;
-        }
-        const startTime = timePart.slice(0, 5);
-        const durationMins = performance.duration ?? 120;
-        const endTime = addMinutesToTime(startTime, durationMins);
-        return { date: datePart, startTime, endTime };
-      })
-      .filter((instance): instance is { date: string; startTime: string; endTime: string } => Boolean(instance));
-    if (instances.length > 0) {
-      return { kind: 'specific', instances };
-    }
-  } else if (isPlace) {
-    const extracted = extractOpeningHours(scrapedPages, []);
-    if (
-      extracted.source !== 'none' &&
-      extracted.openingHours &&
-      Object.keys(extracted.openingHours).length >= 4
-    ) {
-      return {
-        kind: 'ongoing',
-        openingHours: extracted.openingHours,
-        note: extracted.note,
-      };
-    }
+  const performances = event.schedules?.flatMap((schedule) => schedule.performances ?? []) ?? [];
+  const instances = performances
+    .filter((p): p is SourcePerformance & { ts: string } => Boolean(p.ts))
+    .map((p) => {
+      const [date, time] = p.ts.split('T');
+      const startTime = time.slice(0, 5);
+      const duration = p.duration ?? 120;
+      const endTime = addMinutesToTime(startTime, duration);
+      return { date, startTime, endTime };
+    })
+    .filter(Boolean);
+
+  if (llmData.type === 'event') {
+    if (instances.length === 0) return null;
+    return { kind: 'event', instances: instances.map((i) => ({ ...i, location })) };
   }
+
+  if (llmData.type === 'place') {
+    const extracted = extractOpeningHours(scrapedPages, []);
+    if (extracted.source !== 'none' && extracted.openingHours && Object.keys(extracted.openingHours).length >= 4) {
+      return { kind: 'ongoing', location, openingHours: extracted.openingHours, note: extracted.note };
+    }
+    return null;
+  }
+
   return null;
 }

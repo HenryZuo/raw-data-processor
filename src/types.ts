@@ -65,4 +65,5 @@ export interface PageScrapeResult {
     extractedPrice?: string;
     extractedDescription?: string;
   };
+  html?: string;
 }

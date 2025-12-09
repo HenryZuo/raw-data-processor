@@ -1,4 +1,4 @@
-import { normalizeCandidateUrl, isBookingDomain } from './utils.js';
+import { cleanText, normalizeCandidateUrl, isBookingDomain } from './utils.js';
 import type { SourceEvent } from './types.js';
 
 const OFFICIAL_SIGNAL_REGEX = /official|book tickets|opening times|visit us|family|kids|age \d|merlin|©/i;
@@ -15,10 +15,15 @@ const SERP_API_BLACKLIST = [
   'ticketweb',
   'dayoutwiththekids.co.uk',
   'visitlondon.com',
+  'tripadvisor',
+  'wikipedia',
+  'youtube',
+  'facebook',
+  'yelp',
 ];
 const OFFICIAL_URL_CACHE = new Map<string, string | null>();
 
-function normalizeActivityForHostname(name: string): string | null {
+export function normalizeActivityForHostname(name: string): string | null {
   const cleaned = name
     .toLowerCase()
     .replace(/[’'‘`]/g, '')
@@ -27,26 +32,35 @@ function normalizeActivityForHostname(name: string): string | null {
   return cleaned.length >= 3 ? cleaned : null;
 }
 
-async function verifyCandidateUrl(url: string, activityName: string, eventId: string): Promise<boolean> {
+function normalizeToRootUrl(url: string): string {
+  try {
+    return `${new URL(url).origin}/`;
+  } catch {
+    return url;
+  }
+}
+
+async function verifyCandidateUrl(url: string, event: SourceEvent): Promise<boolean> {
   try {
     const head = await fetch(url, { method: 'HEAD', redirect: 'follow', signal: AbortSignal.timeout(8_000) });
     if (!head.ok || !head.headers.get('content-type')?.includes('text/html')) {
-      console.log(`[${eventId}] ${url} failed HEAD/content-type check`);
+      console.log(`[${event.event_id}] ${url} failed HEAD/content-type check`);
       return false;
     }
 
     const res = await fetch(url, { signal: AbortSignal.timeout(12_000) });
     if (!res.ok) {
-      console.log(`[${eventId}] ${url} failed fetch status ${res.status}`);
+      console.log(`[${event.event_id}] ${url} failed fetch status ${res.status}`);
       return false;
     }
     const buffer = await res.arrayBuffer();
     if (buffer.byteLength < 5000) {
-      console.log(`[${eventId}] ${url} rejected because the HTML was too small (${buffer.byteLength} bytes)`);
+      console.log(`[${event.event_id}] ${url} rejected because the HTML was too small (${buffer.byteLength} bytes)`);
       return false;
     }
 
     const html = new TextDecoder().decode(buffer.slice(0, 15_000)).toLowerCase();
+    const activityName = event.name.trim();
     const normalizedName = activityName.toLowerCase().replace(/[’'‘`]/g, '');
     const tokens = normalizedName
       .replace(/\blondon\b/g, '')
@@ -56,42 +70,110 @@ async function verifyCandidateUrl(url: string, activityName: string, eventId: st
     const hasName =
       (normalizedName.length >= 3 && html.includes(normalizedName)) ||
       tokens.some((token) => html.includes(token));
+    if (!hasName) {
+      console.log(`[${event.event_id}] ${url} rejected because the activity name is missing from HTML`);
+      return false;
+    }
+    const descriptionTokens = new Set<string>();
+    for (const desc of event.descriptions ?? []) {
+      desc.description
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .split(' ')
+        .filter((token) => token.length >= 4)
+        .forEach((token) => descriptionTokens.add(token));
+    }
+    const hasDescriptionMatch = Array.from(descriptionTokens).some((token) => html.includes(token));
     const hasOfficialSignal = OFFICIAL_SIGNAL_REGEX.test(html);
     const noAggregator = !AGGREGATOR_REGEX.test(html);
 
     const hostname = new URL(url).hostname.toLowerCase();
     const normalizedHostname = normalizeActivityForHostname(activityName);
     const hostnameSlim = hostname.replace(/[^a-z0-9]+/g, '');
-    if (normalizedHostname && !hostnameSlim.includes(normalizedHostname)) {
+    const hostnameMatches = !normalizedHostname || hostnameSlim.includes(normalizedHostname);
+    if (!hostnameMatches) {
       console.log(
-        `[${eventId}] rejected ${url} because hostname "${hostname}" lacks normalized activity "${normalizedHostname}"`,
+        `[${event.event_id}] hostname "${hostname}" lacks normalized activity "${normalizedHostname}", but continuing because signals may suffice.`,
       );
+    }
+    const tagLookup = new Set((event.tags ?? []).map((tag) => tag.toLowerCase()));
+    if (tagLookup.has('film') && (html.includes('musical') || html.includes('theatre'))) {
+      console.log(`[${event.event_id}] rejected ${url} because film tags clash with musical/theatre content`);
       return false;
     }
 
-    const passedCount = [hasName, hasOfficialSignal, noAggregator].filter(Boolean).length;
-    const result = passedCount >= 2;
+    const signalCount = [hasDescriptionMatch, hasOfficialSignal, noAggregator].filter(Boolean).length;
+    const passed = signalCount >= 3;
     console.log(
-      `[verify] ${url} → name: ${hasName ? 'yes' : 'no'}, officialSignal: ${hasOfficialSignal ? 'yes' : 'no'}, noAggregator: ${
-        noAggregator ? 'yes' : 'no'
-      } → ${result ? 'ACCEPTED' : 'REJECTED'}`,
+      `[verify] ${url} → name: ${hasName ? 'yes' : 'no'}, desc: ${hasDescriptionMatch ? 'yes' : 'no'}, official: ${
+        hasOfficialSignal ? 'yes' : 'no'
+      }, noAggregator: ${noAggregator ? 'yes' : 'no'} → ${passed ? 'ACCEPTED' : 'REJECTED'}`,
     );
-    return result;
+    return passed;
   } catch (error) {
-    console.log(`[${eventId}] verification for ${url} failed: ${(error as Error).message}`);
+    console.log(`[${event.event_id}] verification for ${url} failed: ${(error as Error).message}`);
     return false;
   }
 }
 
-function buildSearchQuery(event: SourceEvent): string {
-  const tagsSegment = event.tags?.slice(0, 3).filter(Boolean).join(' ');
-  const nameSegment = event.name.trim();
-  const parts = [`"${nameSegment}"`];
-  if (tagsSegment) {
-    parts.push(tagsSegment);
+function cleanSearchName(name: string): string {
+  return name
+    .replace(/[’'‘`!]/g, '')
+    .replace(/[^a-zA-Z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function buildTypeHints(tags?: string[]): string {
+  const normalizedTags = new Set((tags ?? []).map((tag) => tag.toLowerCase()));
+  const hints: string[] = [];
+  if (normalizedTags.has('film')) {
+    hints.push('film movie screening cinema');
   }
-  parts.push('official website London', '-ticketmaster -eventbrite -seetickets -timeout');
-  return parts.join(' ');
+  if (normalizedTags.has('theatre') || normalizedTags.has('musical')) {
+    hints.push('theatre musical stage');
+  }
+  if (normalizedTags.has('concert') || normalizedTags.has('music')) {
+    hints.push('concert live performance');
+  }
+  return hints.join(' ');
+}
+
+function buildExclusionHints(tags?: string[]): string[] {
+  const exclusions = ['-ticketmaster', '-eventbrite', '-seetickets', '-timeout', '-visitlondon'];
+  const normalizedTags = new Set((tags ?? []).map((tag) => tag.toLowerCase()));
+  if (normalizedTags.has('film')) {
+    exclusions.push('-musical', '-theatre');
+  }
+  if (normalizedTags.has('theatre') || normalizedTags.has('musical')) {
+    exclusions.push('-film', '-movie', '-screening', '-cinema');
+  }
+  return exclusions;
+}
+
+function buildDescriptionSnippet(event: SourceEvent): string {
+  const text = event.descriptions?.[0]?.description;
+  if (!text) return '';
+  return cleanText(text).slice(0, 50);
+}
+
+function buildSearchQuery(event: SourceEvent): string {
+  const cleanedName = cleanSearchName(event.name);
+  const typeHints = buildTypeHints(event.tags);
+  const snippet = buildDescriptionSnippet(event);
+  const exclusions = buildExclusionHints(event.tags).join(' ');
+  return [
+    cleanedName,
+    'London',
+    'official',
+    'website',
+    'tickets',
+    typeHints,
+    snippet,
+    exclusions,
+  ]
+    .filter(Boolean)
+    .join(' ');
 }
 
 async function fetchSerpLinks(query: string): Promise<string[]> {
@@ -136,12 +218,88 @@ function filterAndLimitSerpLinks(links: string[]): string[] {
   return filtered;
 }
 
+function collectNonBookingCandidateSources(event: SourceEvent): { urls: string[]; hosts: Set<string> } {
+  const urls = new Set<string>();
+  const hosts = new Set<string>();
+  const addSource = (rawUrl: string | undefined) => {
+    if (!rawUrl) return;
+    const normalized = normalizeCandidateUrl(rawUrl);
+    if (!normalized || isBookingDomain(normalized)) return;
+    urls.add(normalized);
+    try {
+      hosts.add(new URL(normalized).hostname.toLowerCase());
+    } catch {
+      // ignore hostname extraction errors
+    }
+  };
+
+  event.links?.forEach((link) => addSource(link.url));
+  for (const schedule of event.schedules ?? []) {
+    schedule.links?.forEach((link) => addSource(link.url));
+    for (const performance of schedule.performances ?? []) {
+      performance.links?.forEach((link) => addSource(link.url));
+    }
+  }
+
+  return { urls: Array.from(urls), hosts };
+}
+
+async function evaluateCandidateList(
+  candidates: string[],
+  event: SourceEvent,
+  preferredHosts: Set<string>,
+): Promise<{ url: string; pathLength: number; hostMatch: boolean }[]> {
+  const verified: { url: string; pathLength: number; hostMatch: boolean }[] = [];
+  const seen = new Set<string>();
+  const normalizedActivityHostname = normalizeActivityForHostname(event.name);
+
+  for (const candidate of candidates) {
+    console.log(`[${event.event_id}] evaluating candidate ${candidate}`);
+    const normalized = normalizeCandidateUrl(candidate);
+    if (!normalized || seen.has(normalized) || isBookingDomain(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+
+    if (await verifyCandidateUrl(normalized, event)) {
+      let pathLength = normalized.length;
+      try {
+        pathLength = new URL(normalized).pathname.length;
+      } catch {
+        pathLength = normalized.length;
+      }
+      const hostname = (() => {
+        try {
+          return new URL(normalized).hostname.toLowerCase();
+        } catch {
+          return '';
+        }
+      })();
+      const hostnameSlim = hostname.replace(/[^a-z0-9]+/g, '');
+      const hostnameMatch = normalizedActivityHostname
+        ? hostnameSlim.includes(normalizedActivityHostname)
+        : false;
+      const hostMatch = hostname ? preferredHosts.has(hostname) || hostnameMatch : false;
+      verified.push({ url: normalized, pathLength, hostMatch });
+    }
+  }
+
+  verified.sort((a, b) => {
+    if (a.hostMatch !== b.hostMatch) {
+      return b.hostMatch ? 1 : -1;
+    }
+    return a.pathLength - b.pathLength;
+  });
+
+  return verified;
+}
+
 export async function resolveOfficialUrl(event: SourceEvent): Promise<string | null> {
   if (OFFICIAL_URL_CACHE.has(event.event_id)) {
     return OFFICIAL_URL_CACHE.get(event.event_id) ?? null;
   }
 
-  const activityName = event.name.trim();
+  const eventId = event.event_id;
   let officialUrl: string | null = null;
 
   const website = event.website?.trim();
@@ -149,33 +307,94 @@ export async function resolveOfficialUrl(event: SourceEvent): Promise<string | n
     const normalized = normalizeCandidateUrl(website);
     if (normalized) {
       if (isBookingDomain(normalized)) {
-        console.log(`[${event.event_id}] rejected DataThistle website ${normalized} because it points to a booking domain.`);
+        console.log(`[${eventId}] rejected DataThistle website ${normalized} because it points to a booking domain.`);
       } else {
-        officialUrl = normalized;
-        console.log(`[${event.event_id}] using trusted DataThistle website ${normalized}`);
-        OFFICIAL_URL_CACHE.set(event.event_id, officialUrl);
+        officialUrl = normalizeToRootUrl(normalized);
+        console.log(`[${eventId}] using trusted DataThistle website ${officialUrl}`);
+        OFFICIAL_URL_CACHE.set(eventId, officialUrl);
         return officialUrl;
       }
     }
   }
 
-  const query = buildSearchQuery(event);
-  const serpLinks = await fetchSerpLinks(query);
-  const candidates = filterAndLimitSerpLinks(serpLinks);
-
-  for (const candidate of candidates) {
-    console.log(`[${event.event_id}] SerpAPI candidate ${candidate}`);
-    const normalized = normalizeCandidateUrl(candidate);
-    if (!normalized) {
-      console.log(`[${event.event_id}] skipped invalid candidate ${candidate}`);
-      continue;
-    }
-    if (await verifyCandidateUrl(normalized, activityName, event.event_id)) {
-      officialUrl = normalized;
-      break;
+  const { urls: rawUrls, hosts: preferredHosts } = collectNonBookingCandidateSources(event);
+  if (rawUrls.length > 0) {
+    const verifiedRaw = await evaluateCandidateList(rawUrls, event, preferredHosts);
+    if (verifiedRaw.length > 0) {
+      officialUrl = normalizeToRootUrl(verifiedRaw[0].url);
+      console.log(`[${eventId}] selected best candidate from event links: ${officialUrl}`);
+      OFFICIAL_URL_CACHE.set(eventId, officialUrl);
+      return officialUrl;
     }
   }
 
-  OFFICIAL_URL_CACHE.set(event.event_id, officialUrl);
+  const query = buildSearchQuery(event);
+  let candidates = filterAndLimitSerpLinks(await fetchSerpLinks(query));
+  if (candidates.length < 3) {
+    console.log(`[${eventId}] only ${candidates.length} SERP candidates; retrying with simplified query`);
+    const fallbackQuery = `${cleanSearchName(event.name)} London official site`;
+    const fallbackLinks = filterAndLimitSerpLinks(await fetchSerpLinks(fallbackQuery));
+    const merged = Array.from(new Set([...candidates, ...fallbackLinks]));
+    candidates = filterAndLimitSerpLinks(merged);
+  }
+
+  const verifiedCandidates = await evaluateCandidateList(candidates, event, preferredHosts);
+
+  // ---- NEW: Skip dispersed film events (e.g. Elf shown at many cinemas) ----
+  const hasFilmTag = (event.tags ?? []).some((tag) => /film|movie|cinema|screening/i.test(tag));
+  if (hasFilmTag && verifiedCandidates.length > 0) {
+    const uniqueHosts = new Set(
+      verifiedCandidates
+        .map((c) => {
+          try {
+            return new URL(c.url).hostname.toLowerCase();
+          } catch {
+            return '';
+          }
+        })
+        .filter(Boolean),
+    );
+    if (uniqueHosts.size > 1) {
+      const CINEMA_HOSTNAMES = [
+        'odeon.co.uk',
+        'vue.com',
+        'cineworld.co.uk',
+        'picturehouses.com',
+        'everymancinema.com',
+        'curzon.com',
+        'curzoncinemas.com',
+        'showcasecinemas.co.uk',
+        'reelcinemas.co.uk',
+        'phoenixcinema.co.uk',
+        'riocinema.org.uk',
+        'lexicinema.co.uk',
+        'bfi.org.uk',
+        'barbican.org.uk',
+        'genesis-cinema.co.uk',
+        'riversidestudios.co.uk',
+        'cinema',
+        'filmhouse',
+        'picturehouse',
+      ];
+      const cinemaHosts = Array.from(uniqueHosts).filter(
+        (host) => CINEMA_HOSTNAMES.includes(host) || CINEMA_HOSTNAMES.some((p) => host.includes(p)),
+      );
+      if (cinemaHosts.length >= 2) {
+        console.log(
+          `[${event.event_id}] SKIPPING dispersed film – multiple cinema venues: ${cinemaHosts.join(', ')}`,
+        );
+        OFFICIAL_URL_CACHE.set(eventId, null);
+        return null;
+      }
+    }
+  }
+  // ---- END NEW BLOCK ----
+
+  if (verifiedCandidates.length > 0) {
+    officialUrl = normalizeToRootUrl(verifiedCandidates[0].url);
+    console.log(`[${eventId}] Selected best URL: ${officialUrl}`);
+  }
+
+  OFFICIAL_URL_CACHE.set(eventId, officialUrl);
   return officialUrl;
 }

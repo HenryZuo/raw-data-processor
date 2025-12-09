@@ -109,11 +109,13 @@ export async function geocode(query: string): Promise<{ lat: number; lng: number
 }
 
 export function buildAddressLine(place?: SourcePlace): string {
-  if (!place) {
-    return 'London, United Kingdom';
-  }
-  const line = [place.address, place.town, place.postal_code].filter(Boolean).join(', ');
-  return line || 'London, United Kingdom';
+  if (!place) return 'London, United Kingdom';
+  const parts: string[] = [];
+  if (place.name && place.name.trim() && !place.name.match(/^london$/i)) parts.push(place.name.trim());
+  if (place.address) parts.push(place.address.trim());
+  if (place.town) parts.push(place.town.trim());
+  if (place.postal_code) parts.push(place.postal_code.trim().replace(/\s+/g, ' ').toUpperCase());
+  return parts.length ? parts.join(', ') : 'London, United Kingdom';
 }
 
 export async function resolveCoordinates(place?: SourcePlace): Promise<{ lat: number; lng: number }> {
@@ -173,23 +175,91 @@ const DAY_CANONICAL: Record<string, string> = {
   sunday: 'Sun',
 };
 
+const DAY_ORDER = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+function to24h(hourPart: string, minutePart: string | undefined, ampm?: string): string {
+  let hour = parseInt(hourPart, 10);
+  let minute = minutePart ? parseInt(minutePart, 10) : 0;
+  if (Number.isNaN(hour)) {
+    hour = 0;
+  }
+  if (Number.isNaN(minute)) {
+    minute = 0;
+  }
+  const suffix = ampm?.trim().toLowerCase();
+  if (suffix === 'pm' && hour < 12) {
+    hour += 12;
+  }
+  if (suffix === 'am' && hour === 12) {
+    hour = 0;
+  }
+  hour = ((hour % 24) + 24) % 24;
+  minute = Math.min(59, Math.max(0, minute));
+  const pad = (value: number) => value.toString().padStart(2, '0');
+  return `${pad(hour)}:${pad(minute)}`;
+}
+
+function expandDayRange(start: string, end: string): string[] {
+  const startIdx = DAY_ORDER.indexOf(start);
+  const endIdx = DAY_ORDER.indexOf(end);
+  if (startIdx === -1 || endIdx === -1) {
+    return [start];
+  }
+  const days: string[] = [];
+  let idx = startIdx;
+  do {
+    days.push(DAY_ORDER[idx]);
+    if (idx === endIdx) {
+      break;
+    }
+    idx = (idx + 1) % DAY_ORDER.length;
+  } while (days.length < DAY_ORDER.length);
+  return days;
+}
+
 function parseHoursText(text: string): Record<string, { open: string; close: string }> {
   const result: Record<string, { open: string; close: string }> = {};
-  const dayPattern = '(mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)';
-  const timePattern = '(\\d{1,2}:\\d{2})';
-  const regex = new RegExp(`${dayPattern}[\\s\\S]{0,40}?${timePattern}\\s*[–-]\\s*${timePattern}`, 'gi');
+  const normalized = text
+    .toLowerCase()
+    .replace(/a\.m\./g, 'am')
+    .replace(/p\.m\./g, 'pm')
+    .replace(/midnight/g, '12am')
+    .replace(/noon/g, '12pm');
+
+  const dayRegex =
+    /(mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)(?:\s*(?:-|to)\s*(mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?))?\s*(?:[:–—-])?\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*[-–—]\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/gi;
   let match: RegExpExecArray | null;
-  while ((match = regex.exec(text)) !== null) {
-    const dayKey = match[1]?.toLowerCase();
-    if (!dayKey) continue;
-    const canonical = DAY_CANONICAL[dayKey];
-    if (!canonical || result[canonical]) continue;
-    const open = match[2];
-    const close = match[3];
-    if (open && close) {
-      result[canonical] = { open, close };
+  while ((match = dayRegex.exec(normalized)) !== null) {
+    const startToken = match[1];
+    const endToken = match[2];
+    const startDay = startToken ? DAY_CANONICAL[startToken.slice(0, 3).toLowerCase()] : null;
+    const endDay = endToken ? DAY_CANONICAL[endToken.slice(0, 3).toLowerCase()] : startDay;
+    if (!startDay || !endDay) {
+      continue;
+    }
+    const open = to24h(match[3], match[4], match[5] ?? undefined);
+    const close = to24h(match[6], match[7], match[8] ?? undefined);
+    const days = expandDayRange(startDay, endDay);
+    for (const day of days) {
+      if (!result[day]) {
+        result[day] = { open, close };
+      }
     }
   }
+
+  const dailyRegex =
+    /(daily|every day|open daily|open every day|open daily|open every day)(?:\s*[:–—-])?\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*[-–—]\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i;
+  const dailyMatch = dailyRegex.exec(normalized);
+  if (dailyMatch) {
+    const open = to24h(dailyMatch[2], dailyMatch[3], dailyMatch[4] ?? undefined);
+    const close = to24h(dailyMatch[5], dailyMatch[6], dailyMatch[7] ?? undefined);
+    for (const day of DAY_ORDER) {
+      if (!result[day]) {
+        result[day] = { open, close };
+      }
+    }
+  }
+
   return result;
 }
 
@@ -235,4 +305,17 @@ export function addMinutesToTime(time: string, minutesToAdd: number): string {
   const resultMinutes = normalized % 60;
   const pad = (value: number) => value.toString().padStart(2, '0');
   return `${pad(resultHours)}:${pad(resultMinutes)}`;
+}
+
+export function formatExportTimestamp(date = new Date()): string {
+  const pad = (value: number) => value.toString().padStart(2, '0');
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(
+    date.getHours(),
+  )}${pad(date.getMinutes())}`;
+}
+
+export function sanitizeNameForFilename(name: string): string {
+  const firstWord = (name.trim().split(/\s+/)[0] ?? 'activity').toLowerCase();
+  const cleaned = firstWord.replace(/[^a-z0-9-]/g, '');
+  return cleaned || 'activity';
 }
