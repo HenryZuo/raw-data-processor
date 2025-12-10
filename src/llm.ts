@@ -265,11 +265,7 @@ export function normalizeLLMOutput(raw: unknown): ActivityLLMOutput {
   };
 }
 
-function buildPrompt(
-  event: SourceEvent,
-  scrapedPages: PageScrapeResult[],
-  rawScheduleSummary: string,
-): string {
+function buildPrompt(event: SourceEvent, scrapedPages: PageScrapeResult[]): string {
   const tags = event.tags?.join(', ') ?? 'None';
   const rawDescriptions = formatRawDescriptions(event);
   const pageBlocks = scrapedPages
@@ -294,7 +290,6 @@ ${page.text.slice(0, 4000)}`;
     `Raw event descriptions (MUST compare to scraped pages for match):\n${rawDescriptions}`,
     `Activity name: ${event.name}`,
     `Tags: ${tags}`,
-    `Raw schedule data from DataThistle:\n${rawScheduleSummary || 'None'}`,
     `You are receiving the TOP ${scrapedPages.length} MOST RELEVANT pages from the official website (already ranked by relevance).`,
     `Each page contains both the full text (first 4000 chars) AND focused extracted sections (hours, age, price, description).`,
     `Synthesise information ACROSS ALL pages. Prioritise the extracted sections when they exist.`,
@@ -344,10 +339,9 @@ function hasPostLLMConflict(event: SourceEvent, output: ActivityLLMOutput): bool
 export async function fetchLLMDataWithRetries(
   event: SourceEvent,
   scrapedPages: PageScrapeResult[],
-  rawScheduleSummary: string,
   apiKey: string,
 ): Promise<ActivityLLMOutput | null> {
-  const prompt = buildPrompt(event, scrapedPages, rawScheduleSummary);
+  const prompt = buildPrompt(event, scrapedPages);
   for (let attempt = 1; attempt <= MAX_GROQ_ATTEMPTS; attempt += 1) {
     try {
       const llmOutput = await callGroqAPI(prompt, apiKey, event.event_id, attempt, event.name);

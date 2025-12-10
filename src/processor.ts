@@ -6,7 +6,7 @@ import { getOfficialUrlAndContent } from './scraper.js';
 import { fetchLLMDataWithRetries, ActivityLLMOutput } from './llm.js';
 import {
   extractOpeningHours,
-  addMinutesToTime,
+  extractDatesAndTimesFromPage,
   resolveCoordinates,
   buildAddressLine,
   isBookingDomain,
@@ -14,7 +14,7 @@ import {
   formatExportTimestamp,
   sanitizeNameForFilename,
 } from './utils.js';
-import type { PageScrapeResult, SourceEvent, SourceSchedule, SourcePerformance } from './types.js';
+import type { PageScrapeResult, SourceEvent } from './types.js';
 import type {
   Activity,
   Dates,
@@ -107,49 +107,11 @@ function logTaskStatuses(eventId: string, statuses: TaskStatus[]): void {
 function dedupeEvents(events: SourceEvent[]): SourceEvent[] {
   const eventsById = new Map<string, SourceEvent>();
   for (const event of events) {
-    const existing = eventsById.get(event.event_id);
-    if (!existing) {
-      eventsById.set(event.event_id, event);
-      continue;
-    }
-    if (countPerformances(event) > countPerformances(existing)) {
+    if (!eventsById.has(event.event_id)) {
       eventsById.set(event.event_id, event);
     }
   }
   return Array.from(eventsById.values());
-}
-
-function countPerformances(event: SourceEvent): number {
-  return (
-    event.schedules?.reduce(
-      (total: number, schedule: SourceSchedule) => total + (schedule.performances?.length ?? 0),
-      0,
-    ) ?? 0
-  );
-}
-
-function describeRawSchedules(event: SourceEvent): string {
-  const lines: string[] = [];
-  const performances = event.schedules?.flatMap((schedule) => schedule.performances ?? []) ?? [];
-  if (!performances.length) {
-    return 'No raw schedule details provided.';
-  }
-  performances.forEach((performance: SourcePerformance, index: number) => {
-    const timestamp = performance.ts;
-    let dateLabel = 'unknown date';
-    let timeLabel = 'unknown time';
-    if (timestamp) {
-      const [datePart, timePart] = timestamp.split('T');
-      dateLabel = datePart ?? 'unknown date';
-      timeLabel = timePart?.slice(0, 5) ?? 'unknown time';
-    }
-    const duration = performance.duration ?? 'unknown duration';
-    const timeNote = performance.time_unknown ? ' (time unknown)' : '';
-    lines.push(
-      `Performance ${index + 1}: ${dateLabel} at ${timeLabel}${timeNote} – duration ${duration} mins`,
-    );
-  });
-  return lines.join('\n');
 }
 
 export async function processEvents(events: SourceEvent[], groqApiKey: string) {
@@ -196,6 +158,13 @@ export async function processEvents(events: SourceEvent[], groqApiKey: string) {
     );
     await exportScoredUrls(event.event_id, event.name, scoredUrls);
     if (!scrapedPages.length) {
+      console.warn(`[${event.event_id}] Skipped - no valid time-info page`);
+      skipped.push({ id: event.event_id, reason: 'no valid time-info page' });
+      setTaskStatus(statuses, 1, 'fail', 'no valid time-info page');
+      logAndContinue();
+      continue;
+    }
+    if (!scrapedPages.length) {
       setTaskStatus(statuses, 1, 'fail', 'official page scrape failed');
       console.log(`[${event.event_id}] Step 2: scraping failed for ${officialUrl}`);
       console.warn(`Scrape failed for ${event.event_id}: ${officialUrl}`);
@@ -211,14 +180,8 @@ export async function processEvents(events: SourceEvent[], groqApiKey: string) {
       await exportScrapedContent(event.event_id, event.name, page, index);
     }
 
-    const rawScheduleSummary = describeRawSchedules(event);
-    console.log(`[${event.event_id}] Step 3: sending scraped content + raw data to Groq`);
-    const llmData = await fetchLLMDataWithRetries(
-      event,
-      scrapedPages,
-      rawScheduleSummary,
-      groqApiKey,
-    );
+    console.log(`[${event.event_id}] Step 3: sending scraped content to Groq`);
+    const llmData = await fetchLLMDataWithRetries(event, scrapedPages, groqApiKey);
     if (!llmData) {
       setTaskStatus(statuses, 3, 'fail', 'LLM returned null (all attempts failed)');
       logAndContinue();
@@ -352,29 +315,39 @@ function computeDatesFromRules(
   scrapedPages: PageScrapeResult[],
   location: SharedLocation,
 ): Dates | null {
-  const performances = event.schedules?.flatMap((schedule) => schedule.performances ?? []) ?? [];
-  const instances = performances
-    .filter((p): p is SourcePerformance & { ts: string } => Boolean(p.ts))
-    .map((p) => {
-      const [date, time] = p.ts.split('T');
-      const startTime = time.slice(0, 5);
-      const duration = p.duration ?? 120;
-      const endTime = addMinutesToTime(startTime, duration);
-      return { date, startTime, endTime };
-    })
-    .filter(Boolean);
+  const chronoResult = scrapedPages
+    .map((page) => extractDatesAndTimesFromPage(page.text, page.url))
+    .find((result) => result.source === 'chrono');
+
+  if (!chronoResult) {
+    return null;
+  }
 
   if (llmData.type === 'event') {
-    if (instances.length === 0) return null;
-    return { kind: 'event', instances: instances.map((i) => ({ ...i, location })) };
+    if (!chronoResult.eventInstances?.length) {
+      return null;
+    }
+    return {
+      kind: 'event',
+      instances: chronoResult.eventInstances.map((instance) => ({
+        date: instance.date,
+        startTime: instance.startTime,
+        endTime: instance.endTime ?? instance.startTime,
+        location,
+      })),
+    };
   }
 
   if (llmData.type === 'place') {
-    const extracted = extractOpeningHours(scrapedPages, []);
-    if (extracted.source !== 'none' && extracted.openingHours && Object.keys(extracted.openingHours).length >= 4) {
-      return { kind: 'ongoing', location, openingHours: extracted.openingHours, note: extracted.note };
+    if (!chronoResult.openingHours || Object.keys(chronoResult.openingHours).length < 4) {
+      return null;
     }
-    return null;
+    return {
+      kind: 'ongoing',
+      location,
+      openingHours: chronoResult.openingHours,
+      note: chronoResult.note,
+    };
   }
 
   return null;

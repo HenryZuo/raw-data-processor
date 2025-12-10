@@ -236,9 +236,6 @@ function collectNonBookingCandidateSources(event: SourceEvent): { urls: string[]
   event.links?.forEach((link) => addSource(link.url));
   for (const schedule of event.schedules ?? []) {
     schedule.links?.forEach((link) => addSource(link.url));
-    for (const performance of schedule.performances ?? []) {
-      performance.links?.forEach((link) => addSource(link.url));
-    }
   }
 
   return { urls: Array.from(urls), hosts };

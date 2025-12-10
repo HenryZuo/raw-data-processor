@@ -1,9 +1,64 @@
 import { chromium } from 'playwright';
 import type { Browser, LaunchOptions, Route as PlaywrightRoute } from 'playwright-core';
 import { existsSync } from 'node:fs';
-import { cleanText, extractOpeningHours } from './utils.js';
+import { cleanText, extractDatesAndTimesFromPage, extractOpeningHours } from './utils.js';
 import { normalizeActivityForHostname } from './url-resolver.js';
 import type { PageScrapeResult } from './types.js';
+
+function scoreUrlForTimeInfo(page: PageScrapeResult): number {
+  let score = 0;
+  const text = page.text.toLowerCase();
+  const title = page.title.toLowerCase();
+  const url = page.url.toLowerCase();
+
+  const timePatterns = /(\d{1,2}(:\d{2})?\s*(am|pm))/gi;
+  const datePatterns = /(\d{1,2}(st|nd|rd|th)?\s*(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)?\s*\d{4}?)/gi;
+  const dayPatterns = /(mon|tue|wed|thu|fri|sat|sun)(day)?/gi;
+  const rangePatterns = /(to|-|–|—|from|until)/gi;
+  score += (text.match(timePatterns)?.length || 0) * 20;
+  score += (text.match(datePatterns)?.length || 0) * 15;
+  score += (text.match(dayPatterns)?.length || 0) * 10;
+  score += (text.match(rangePatterns)?.length || 0) * 5;
+  if (score > 400) score = 400;
+
+  const keywords = ['opening hours', 'schedule', 'times', 'calendar', 'operating', 'event dates', 'start time', 'end time'];
+  keywords.forEach((kw) => {
+    if (text.includes(kw)) score += 30;
+    if (title.includes(kw)) score += 20;
+  });
+  if (score > 700) score = 700;
+
+  if (page.structured.openingHoursText || page.structured.extractedHours) score += 100;
+  if (text.includes('<table') && text.match(dayPatterns)) score += 50;
+  if (text.match(/class\s*=\s*["']calendar["']/i)) score += 50;
+
+  const urlBoosts = ['hours', 'times', 'schedule', 'calendar', 'dates'];
+  urlBoosts.forEach((kw) => {
+    if (url.includes(kw)) score += 20;
+  });
+  score -= (url.split('/').length - 3) * 10;
+
+  return Math.min(score, 1000);
+}
+
+function hasActualTimeInfo(page: PageScrapeResult): boolean {
+  const parsed = extractDatesAndTimesFromPage(page.text, page.url);
+
+  if (parsed.source === 'none') return false;
+
+  if (parsed.openingHours) {
+    const daysWithHours = Object.values(parsed.openingHours).filter(
+      (h) => h.open && h.close && h.open !== h.close,
+    );
+    return daysWithHours.length >= 2;
+  }
+
+  if (parsed.eventInstances && parsed.eventInstances.length > 0) {
+    return parsed.eventInstances.some((inst) => Boolean(inst.startTime));
+  }
+
+  return true;
+}
 
 const SCRAPE_TIMEOUT_MS = 15_000;
 const MAX_SCRAPE_RETRIES = 2;
@@ -648,6 +703,7 @@ export async function getOfficialUrlAndContent(
   }
   const visited = new Set<string>();
   const scored = new Map<string, { page: PageScrapeResult; score: number }>();
+  const allPages = new Map<string, PageScrapeResult>();
   let crawled = 0;
   let maxCrawlPages = MAX_CRAWL_PAGES;
 
@@ -675,6 +731,7 @@ export async function getOfficialUrlAndContent(
     if (!existing || score > existing.score) {
       scored.set(candidate.page.url, { page: candidate.page, score });
     }
+    allPages.set(candidate.page.url, candidate.page);
   };
 
   const crawlQueue = async (seedQueue?: Array<{ url: string; depth: number }>) => {
@@ -835,7 +892,7 @@ export async function getOfficialUrlAndContent(
           if (
             task.id === 'hours' &&
             !miniCrawledTasks.has(task.id) &&
-            extractOpeningHours([extra.page], []).source === 'none'
+            extractOpeningHours([extra.page]).source === 'none'
           ) {
             console.log(`[Recursive] No hours in ${candidate.url}; mini-crawling its links`);
             const miniQueue: { url: string; depth: number; score: number }[] = [];
@@ -923,7 +980,7 @@ export async function getOfficialUrlAndContent(
     sorted = buildSortedResults();
   }
 
-  const hoursResult = extractOpeningHours(sorted, []);
+  const hoursResult = extractOpeningHours(sorted);
   if (hoursResult.source === 'none') {
     console.log(`[${activityName}] No opening hours found in top pages – launching targeted hours crawl`);
     const hoursCandidates = Array.from(allPotentialLinks)
@@ -946,7 +1003,7 @@ export async function getOfficialUrlAndContent(
   }
 
   sorted = buildSortedResults();
-  let extraction = extractOpeningHours(sorted, []);
+  let extraction = extractOpeningHours(sorted);
   if (extraction.source === 'none') {
     console.log(`[Efficiency] Hours still missing – running hours-only task crawls`);
     const hoursTask = CRAWL_TASKS.filter((task) => task.id === 'hours');
@@ -955,7 +1012,7 @@ export async function getOfficialUrlAndContent(
     console.log('[Efficiency] Hours found early; skipping hours-only task crawls');
   }
   sorted = buildSortedResults();
-  extraction = extractOpeningHours(sorted, []);
+  extraction = extractOpeningHours(sorted);
   const otherDataMissing = sorted.every(
     (page) =>
       !page.structured.extractedAge &&
@@ -980,7 +1037,38 @@ export async function getOfficialUrlAndContent(
     .map(([url, entry]) => ({ url, score: entry.score }))
     .sort((a, b) => b.score - a.score);
 
-  return { pages: sorted, scoredUrls };
+  const timeScored = Array.from(allPages.entries())
+    .map(([url, page]) => ({ url, page, score: scoreUrlForTimeInfo(page) }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3);
+
+  let hoursRep: PageScrapeResult | null = null;
+  for (const candidate of timeScored) {
+    if (hasActualTimeInfo(candidate.page)) {
+      hoursRep = candidate.page;
+      console.log(`[HOURS TRACK] Selected ${candidate.url} as time-info rep (score: ${candidate.score})`);
+      break;
+    }
+    console.log(`[HOURS TRACK] Rejected ${candidate.url} - no strict time info`);
+  }
+
+  if (!hoursRep && timeScored.length > 0) {
+    hoursRep = timeScored[0].page;
+    console.log(
+      `[HOURS TRACK] Fallback (no strict match) → using highest-scored page: ${timeScored[0].url} (score: ${timeScored[0].score})`,
+    );
+  }
+
+  if (!hoursRep) {
+    console.log(`[HOURS TRACK] No valid time-info page found - excluding activity`);
+    return { pages: [], scoredUrls };
+  }
+
+  const generalCandidates = buildSortedResults();
+  const filteredGeneral = generalCandidates.filter((page) => page.url !== hoursRep?.url).slice(0, 2);
+  const finalPages = [hoursRep, ...filteredGeneral];
+
+  return { pages: finalPages, scoredUrls };
 }
 
 async function retryOperation<T>(fn: () => Promise<T>, label: string, maxRetries = 5, delay = 2_000): Promise<T> {

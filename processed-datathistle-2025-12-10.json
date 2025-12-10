@@ -1,0 +1,197 @@
+[
+  {
+    "id": "05ee919c-161f-9a69-07a8-73060018426a--event",
+    "name": "Curious About Covent Garden",
+    "summary": "Explore Covent Garden with a self-guided treasure hunt, perfect for families and friends",
+    "priceLevel": "££",
+    "age": {
+      "officialAgeAvailable": true,
+      "minAge": 6,
+      "maxAge": 18
+    },
+    "url": "http://www.curiousabout.co.uk/visitor-information/before-you-visit/opening-hours",
+    "source": "datathistle",
+    "lastUpdate": "2025-12-10T20:27:40.836Z",
+    "keywords": [
+      "covent",
+      "garden",
+      "treasure",
+      "hunt",
+      "self",
+      "guided",
+      "families",
+      "friends",
+      "fun",
+      "adventure",
+      "exploration",
+      "london",
+      "walks",
+      "history",
+      "landmarks",
+      "hidden",
+      "gems",
+      "city",
+      "centre",
+      "cosmopolitan",
+      "architecture",
+      "harbour",
+      "parks",
+      "museums",
+      "galleries",
+      "sights",
+      "discovery",
+      "enjoyment"
+    ],
+    "labels": [
+      "outdoor",
+      "family",
+      "adventure"
+    ],
+    "imageUrl": "https://files.datathistle.com/images/2020/08/20/50159e53-df56-4c32-807c-9f7b797a98ed-LST403568.jpg",
+    "dates": {
+      "kind": "event",
+      "instances": [
+        {
+          "date": "2025-12-24",
+          "startTime": "20:27",
+          "endTime": "20:27",
+          "location": {
+            "addressLine": "Seven Dials District, Covent Gardens, London, WC2H 9DA",
+            "postcode": "WC2H 9DA",
+            "city": "London",
+            "country": "United Kingdom",
+            "lat": 51.51472,
+            "lng": -0.12789,
+            "area": "Greater London"
+          }
+        },
+        {
+          "date": "2026-01-10",
+          "startTime": "20:27",
+          "endTime": "20:27",
+          "location": {
+            "addressLine": "Seven Dials District, Covent Gardens, London, WC2H 9DA",
+            "postcode": "WC2H 9DA",
+            "city": "London",
+            "country": "United Kingdom",
+            "lat": 51.51472,
+            "lng": -0.12789,
+            "area": "Greater London"
+          }
+        },
+        {
+          "date": "2025-12-11",
+          "startTime": "20:27",
+          "endTime": "20:27",
+          "location": {
+            "addressLine": "Seven Dials District, Covent Gardens, London, WC2H 9DA",
+            "postcode": "WC2H 9DA",
+            "city": "London",
+            "country": "United Kingdom",
+            "lat": 51.51472,
+            "lng": -0.12789,
+            "area": "Greater London"
+          }
+        },
+        {
+          "date": "2025-12-14",
+          "startTime": "12:00",
+          "endTime": "12:00",
+          "location": {
+            "addressLine": "Seven Dials District, Covent Gardens, London, WC2H 9DA",
+            "postcode": "WC2H 9DA",
+            "city": "London",
+            "country": "United Kingdom",
+            "lat": 51.51472,
+            "lng": -0.12789,
+            "area": "Greater London"
+          }
+        },
+        {
+          "date": "2025-12-24",
+          "startTime": "20:27",
+          "endTime": "20:27",
+          "location": {
+            "addressLine": "Seven Dials District, Covent Gardens, London, WC2H 9DA",
+            "postcode": "WC2H 9DA",
+            "city": "London",
+            "country": "United Kingdom",
+            "lat": 51.51472,
+            "lng": -0.12789,
+            "area": "Greater London"
+          }
+        },
+        {
+          "date": "2025-12-24",
+          "startTime": "20:27",
+          "endTime": "20:27",
+          "location": {
+            "addressLine": "Seven Dials District, Covent Gardens, London, WC2H 9DA",
+            "postcode": "WC2H 9DA",
+            "city": "London",
+            "country": "United Kingdom",
+            "lat": 51.51472,
+            "lng": -0.12789,
+            "area": "Greater London"
+          }
+        },
+        {
+          "date": "2026-01-10",
+          "startTime": "20:27",
+          "endTime": "20:27",
+          "location": {
+            "addressLine": "Seven Dials District, Covent Gardens, London, WC2H 9DA",
+            "postcode": "WC2H 9DA",
+            "city": "London",
+            "country": "United Kingdom",
+            "lat": 51.51472,
+            "lng": -0.12789,
+            "area": "Greater London"
+          }
+        },
+        {
+          "date": "2025-12-11",
+          "startTime": "20:27",
+          "endTime": "20:27",
+          "location": {
+            "addressLine": "Seven Dials District, Covent Gardens, London, WC2H 9DA",
+            "postcode": "WC2H 9DA",
+            "city": "London",
+            "country": "United Kingdom",
+            "lat": 51.51472,
+            "lng": -0.12789,
+            "area": "Greater London"
+          }
+        },
+        {
+          "date": "2025-12-14",
+          "startTime": "12:00",
+          "endTime": "12:00",
+          "location": {
+            "addressLine": "Seven Dials District, Covent Gardens, London, WC2H 9DA",
+            "postcode": "WC2H 9DA",
+            "city": "London",
+            "country": "United Kingdom",
+            "lat": 51.51472,
+            "lng": -0.12789,
+            "area": "Greater London"
+          }
+        },
+        {
+          "date": "2025-12-24",
+          "startTime": "20:27",
+          "endTime": "20:27",
+          "location": {
+            "addressLine": "Seven Dials District, Covent Gardens, London, WC2H 9DA",
+            "postcode": "WC2H 9DA",
+            "city": "London",
+            "country": "United Kingdom",
+            "lat": 51.51472,
+            "lng": -0.12789,
+            "area": "Greater London"
+          }
+        }
+      ]
+    }
+  }
+]

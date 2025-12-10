@@ -1,4 +1,5 @@
-import type { PageScrapeResult, SourcePerformance, SourcePlace } from './types.js';
+import * as chrono from 'chrono-node';
+import type { PageScrapeResult, SourcePlace } from './types.js';
 
 export const TIMEOUT_MS = 30_000;
 export const RETRY_DELAY_MS = 2_000;
@@ -33,6 +34,152 @@ export function cleanText(text: string): string {
     .trim();
   return collapsed;
 }
+
+const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
+
+function formatTimeFromDate(date: Date): string {
+  const hours = date.getHours();
+  const minutes = date.getMinutes();
+  const pad = (value: number) => value.toString().padStart(2, '0');
+  return `${pad(hours)}:${pad(minutes)}`;
+}
+
+function dayLabelFromDate(date: Date): string {
+  return DAY_LABELS[date.getDay()];
+}
+
+const MONTH_REGEX = /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b/i;
+const YEAR_REGEX = /\b(19|20)\d{2}\b/;
+const DAY_REGEX = /\b(?:mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b/i;
+const DAILY_REGEX = /\b(daily|every day|open daily|open every day)\b/i;
+
+export function extractDatesAndTimesFromPage(
+  text: string,
+  url: string,
+  referenceDate = new Date(),
+): {
+  source: 'chrono';
+  openingHours?: Record<'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat' | 'Sun', { open: string; close: string }>;
+  eventInstances?: Array<{ date: string; startTime: string; endTime?: string }>;
+  note?: string;
+} | { source: 'none' } {
+  const segments = text
+    .split(/\n{1,2}/)
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
+
+  const groupedResults = new Map<string, chrono.ParsedResult[]>();
+
+  const addResults = (segment: string, results: chrono.ParsedResult[]) => {
+    if (!results.length) return;
+    const existing = groupedResults.get(segment) ?? [];
+    groupedResults.set(segment, existing.concat(results));
+  };
+
+  for (const segment of segments) {
+    const results = chrono.parse(segment, referenceDate, { forwardDate: true });
+    addResults(segment, results);
+  }
+
+  const fallbackResults = chrono.parse(text, referenceDate, { forwardDate: true });
+  for (const result of fallbackResults) {
+    addResults(result.text, [result]);
+  }
+
+  if (!groupedResults.size) {
+    return { source: 'none' };
+  }
+
+  const openingHours: Record<string, { open: string; close: string }> = {};
+  const eventInstances: Array<{ date: string; startTime: string; endTime?: string }> = [];
+
+  for (const [segment, results] of groupedResults.entries()) {
+    const snippet = segment.toLowerCase();
+    const timeResult = results.find((result) => result.end && (result.start.isCertain('hour') || result.start.get('hour') !== null));
+    const dayResults = results.filter((result) => DAY_REGEX.test(result.text.toLowerCase()));
+    const isDailyPattern = DAILY_REGEX.test(snippet);
+
+    if (timeResult && (dayResults.length > 0 || isDailyPattern)) {
+      const open = formatTimeFromDate(timeResult.start.date());
+      const close = timeResult.end ? formatTimeFromDate(timeResult.end.date()) : open;
+      const days = isDailyPattern
+        ? DAY_ORDER
+        : expandDayRange(
+            dayLabelFromDate(dayResults[0].start.date()),
+            dayResults.length > 1
+              ? dayLabelFromDate(dayResults[dayResults.length - 1].start.date())
+              : dayLabelFromDate(dayResults[0].start.date()),
+          );
+      for (const day of days) {
+        if (!openingHours[day]) {
+          openingHours[day] = { open, close };
+        }
+      }
+      continue;
+    }
+
+    for (const result of results) {
+      const startDate = result.start.date();
+      if (!startDate) continue;
+      const startTime = formatTimeFromDate(startDate);
+      if (!startTime) continue;
+      const endDate = result.end?.date();
+      const endTime = endDate ? formatTimeFromDate(endDate) : undefined;
+
+      const snippetWithResult = `${snippet} ${result.text.toLowerCase()}`;
+      const hasMonth = MONTH_REGEX.test(snippetWithResult);
+      const hasYear = YEAR_REGEX.test(snippetWithResult) || result.start.isCertain('year');
+      const hasDay = DAY_REGEX.test(snippetWithResult);
+      const hasDaily = DAILY_REGEX.test(snippetWithResult);
+
+      const isSpecificDate = hasMonth || hasYear;
+      const isRecurringPattern = (hasDay && !isSpecificDate) || hasDaily;
+
+      if (isRecurringPattern && endTime) {
+        const startDay = dayLabelFromDate(startDate);
+        const endDay = endDate ? dayLabelFromDate(endDate) : startDay;
+        const days = expandDayRange(startDay, endDay);
+        for (const day of days) {
+          if (!openingHours[day]) {
+            openingHours[day] = { open: startTime, close: endTime };
+          }
+        }
+        continue;
+      }
+
+      const instance = { date: startDate.toISOString().split('T')[0], startTime } as {
+        date: string;
+        startTime: string;
+        endTime?: string;
+      };
+      if (endTime) {
+        instance.endTime = endTime;
+      }
+      eventInstances.push(instance);
+    }
+  }
+
+  const meaningfulCount = Object.keys(openingHours).length + eventInstances.length;
+  if (meaningfulCount < 2) {
+    return { source: 'none' };
+  }
+
+  const payload: {
+    source: 'chrono';
+    openingHours?: Record<'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat' | 'Sun', { open: string; close: string }>;
+    eventInstances?: Array<{ date: string; startTime: string; endTime?: string }>;
+    note?: string;
+  } = { source: 'chrono', note: `from ${url}` };
+
+  if (Object.keys(openingHours).length) {
+    payload.openingHours = openingHours as Record<'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat' | 'Sun', { open: string; close: string }>;
+  }
+  if (eventInstances.length) {
+    payload.eventInstances = eventInstances;
+  }
+  return payload;
+}
+
 
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -158,46 +305,7 @@ export interface OpeningHoursExtraction {
   note?: string;
 }
 
-const DAY_CANONICAL: Record<string, string> = {
-  mon: 'Mon',
-  monday: 'Mon',
-  tue: 'Tue',
-  tuesday: 'Tue',
-  wed: 'Wed',
-  wednesday: 'Wed',
-  thu: 'Thu',
-  thursday: 'Thu',
-  fri: 'Fri',
-  friday: 'Fri',
-  sat: 'Sat',
-  saturday: 'Sat',
-  sun: 'Sun',
-  sunday: 'Sun',
-};
-
 const DAY_ORDER = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-
-function to24h(hourPart: string, minutePart: string | undefined, ampm?: string): string {
-  let hour = parseInt(hourPart, 10);
-  let minute = minutePart ? parseInt(minutePart, 10) : 0;
-  if (Number.isNaN(hour)) {
-    hour = 0;
-  }
-  if (Number.isNaN(minute)) {
-    minute = 0;
-  }
-  const suffix = ampm?.trim().toLowerCase();
-  if (suffix === 'pm' && hour < 12) {
-    hour += 12;
-  }
-  if (suffix === 'am' && hour === 12) {
-    hour = 0;
-  }
-  hour = ((hour % 24) + 24) % 24;
-  minute = Math.min(59, Math.max(0, minute));
-  const pad = (value: number) => value.toString().padStart(2, '0');
-  return `${pad(hour)}:${pad(minute)}`;
-}
 
 function expandDayRange(start: string, end: string): string[] {
   const startIdx = DAY_ORDER.indexOf(start);
@@ -217,88 +325,15 @@ function expandDayRange(start: string, end: string): string[] {
   return days;
 }
 
-function parseHoursText(text: string): Record<string, { open: string; close: string }> {
-  const result: Record<string, { open: string; close: string }> = {};
-  const normalized = text
-    .toLowerCase()
-    .replace(/a\.m\./g, 'am')
-    .replace(/p\.m\./g, 'pm')
-    .replace(/midnight/g, '12am')
-    .replace(/noon/g, '12pm');
-
-  // Regex 1: Day before optional date (original, e.g., "Wednesday 10th: 10am - 3pm")
-  const dayRegexAfter =
-    /(mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)(?:\s*\d{1,2}(?:st|nd|rd|th)?)?(?:\s*(?:-|to|–|—)\s*(mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)(?:\s*\d{1,2}(?:st|nd|rd|th)?)?)?\s*(?:[:–—-])?\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*[-–—]\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/gi;
-
-  // Regex 2: Optional date before day (new, e.g., "10 Wednesday: 10am - 3pm" or "11th Thu - 14th Sun: 10am - 4pm")
-  const dayRegexBefore =
-    /(?:\d{1,2}(?:st|nd|rd|th)?\s*)?(mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)(?:\s*(?:-|to|–|—)\s*(?:\d{1,2}(?:st|nd|rd|th)?\s*)?(mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?))?\s*(?:[:–—-])?\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*[-–—]\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/gi;
-
-  const processMatches = (regex: RegExp) => {
-    let match: RegExpExecArray | null;
-    while ((match = regex.exec(normalized)) !== null) {
-      const startToken = match[1];
-      const endToken = match[2];
-      const startDay = startToken ? DAY_CANONICAL[startToken.slice(0, 3).toLowerCase()] : null;
-      const endDay = endToken ? DAY_CANONICAL[endToken.slice(0, 3).toLowerCase()] : startDay;
-      if (!startDay || !endDay) continue;
-
-      const open = to24h(match[3], match[4], match[5] ?? undefined);
-      const close = to24h(match[6], match[7], match[8] ?? undefined);
-
-      const days = expandDayRange(startDay, endDay);
-      for (const day of days) {
-        if (!result[day]) {
-          result[day] = { open, close };
-        }
-      }
-    }
-  };
-
-  processMatches(dayRegexAfter);
-  processMatches(dayRegexBefore);
-
-  // Daily fallback (unchanged)
-  const dailyRegex =
-    /(daily|every day|open daily|open every day|open daily|open every day)(?:\s*[:–—-])?\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*[-–—]\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i;
-  const dailyMatch = dailyRegex.exec(normalized);
-  if (dailyMatch) {
-    const open = to24h(dailyMatch[2], dailyMatch[3], dailyMatch[4] ?? undefined);
-    const close = to24h(dailyMatch[5], dailyMatch[6], dailyMatch[7] ?? undefined);
-    for (const day of DAY_ORDER) {
-      if (!result[day]) {
-        result[day] = { open, close };
-      }
-    }
-  }
-
-  return result;
-}
-
-function trimmedText(value?: string): string {
-  return value?.trim() ?? '';
-}
-
-export function extractOpeningHours(
-  pages: PageScrapeResult[],
-  _performances: SourcePerformance[] = [],
-): OpeningHoursExtraction {
+export function extractOpeningHours(pages: PageScrapeResult[]): OpeningHoursExtraction {
   for (const page of pages) {
-    const candidates = [
-      page.structured.extractedHours,
-      page.structured.openingHoursText,
-      page.structured.extractedDescription,
-    ].map(trimmedText);
-    for (const candidate of candidates) {
-      if (!candidate) continue;
-      const parsed = parseHoursText(candidate);
-      if (Object.keys(parsed).length >= 4) {
-        return {
-          source: 'extracted',
-          openingHours: parsed,
-          note: `from ${page.url}`,
-        };
-      }
+    const parsed = extractDatesAndTimesFromPage(page.text, page.url);
+    if (parsed.source === 'chrono' && parsed.openingHours && Object.keys(parsed.openingHours).length >= 4) {
+      return {
+        source: 'extracted',
+        openingHours: parsed.openingHours,
+        note: parsed.note ?? `from ${page.url}`,
+      };
     }
   }
   return { source: 'none' };
