@@ -22,6 +22,7 @@ import type {
 } from '../../london-kids-p1/packages/shared/src/activity.js';
 
 const SCRAPE_LOG_DIR = path.resolve(process.cwd(), 'scrape-logs');
+const SCORED_URLS_DIR = path.resolve(process.cwd(), 'scored-urls');
 
 async function exportScrapedContent(
   eventId: string,
@@ -44,6 +45,28 @@ async function exportScrapedContent(
     await fs.writeFile(path.join(SCRAPE_LOG_DIR, filename), `${JSON.stringify(payload, null, 2)}\n`, 'utf-8');
   } catch (error) {
     console.warn(`Failed to export scraped content for ${eventId}:`, (error as Error).message);
+  }
+}
+
+async function exportScoredUrls(
+  eventId: string,
+  eventName: string,
+  scoredUrls: { url: string; score: number }[],
+): Promise<void> {
+  try {
+    await fs.mkdir(SCORED_URLS_DIR, { recursive: true });
+    const timestamp = formatExportTimestamp();
+    const nameSegment = sanitizeNameForFilename(eventName);
+    const filename = `scores-${timestamp}-${nameSegment}.json`;
+    const payload = {
+      eventId,
+      eventName,
+      scoredUrls,
+      generatedAt: new Date().toISOString(),
+    };
+    await fs.writeFile(path.join(SCORED_URLS_DIR, filename), `${JSON.stringify(payload, null, 2)}\n`, 'utf-8');
+  } catch (error) {
+    console.warn(`Failed to export scored URLs for ${eventId}:`, (error as Error).message);
   }
 }
 
@@ -166,7 +189,12 @@ export async function processEvents(events: SourceEvent[], groqApiKey: string) {
     } catch {
       // ignore invalid URL
     }
-    const scrapedPages = await getOfficialUrlAndContent(startUrl, event.name, USER_AGENT_STRINGS);
+    const { pages: scrapedPages, scoredUrls } = await getOfficialUrlAndContent(
+      startUrl,
+      event.name,
+      USER_AGENT_STRINGS,
+    );
+    await exportScoredUrls(event.event_id, event.name, scoredUrls);
     if (!scrapedPages.length) {
       setTaskStatus(statuses, 1, 'fail', 'official page scrape failed');
       console.log(`[${event.event_id}] Step 2: scraping failed for ${officialUrl}`);

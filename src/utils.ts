@@ -226,27 +226,39 @@ function parseHoursText(text: string): Record<string, { open: string; close: str
     .replace(/midnight/g, '12am')
     .replace(/noon/g, '12pm');
 
-  const dayRegex =
-    /(mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)(?:\s*(?:-|to)\s*(mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?))?\s*(?:[:–—-])?\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*[-–—]\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/gi;
-  let match: RegExpExecArray | null;
-  while ((match = dayRegex.exec(normalized)) !== null) {
-    const startToken = match[1];
-    const endToken = match[2];
-    const startDay = startToken ? DAY_CANONICAL[startToken.slice(0, 3).toLowerCase()] : null;
-    const endDay = endToken ? DAY_CANONICAL[endToken.slice(0, 3).toLowerCase()] : startDay;
-    if (!startDay || !endDay) {
-      continue;
-    }
-    const open = to24h(match[3], match[4], match[5] ?? undefined);
-    const close = to24h(match[6], match[7], match[8] ?? undefined);
-    const days = expandDayRange(startDay, endDay);
-    for (const day of days) {
-      if (!result[day]) {
-        result[day] = { open, close };
+  // Regex 1: Day before optional date (original, e.g., "Wednesday 10th: 10am - 3pm")
+  const dayRegexAfter =
+    /(mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)(?:\s*\d{1,2}(?:st|nd|rd|th)?)?(?:\s*(?:-|to|–|—)\s*(mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)(?:\s*\d{1,2}(?:st|nd|rd|th)?)?)?\s*(?:[:–—-])?\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*[-–—]\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/gi;
+
+  // Regex 2: Optional date before day (new, e.g., "10 Wednesday: 10am - 3pm" or "11th Thu - 14th Sun: 10am - 4pm")
+  const dayRegexBefore =
+    /(?:\d{1,2}(?:st|nd|rd|th)?\s*)?(mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)(?:\s*(?:-|to|–|—)\s*(?:\d{1,2}(?:st|nd|rd|th)?\s*)?(mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?))?\s*(?:[:–—-])?\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*[-–—]\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/gi;
+
+  const processMatches = (regex: RegExp) => {
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(normalized)) !== null) {
+      const startToken = match[1];
+      const endToken = match[2];
+      const startDay = startToken ? DAY_CANONICAL[startToken.slice(0, 3).toLowerCase()] : null;
+      const endDay = endToken ? DAY_CANONICAL[endToken.slice(0, 3).toLowerCase()] : startDay;
+      if (!startDay || !endDay) continue;
+
+      const open = to24h(match[3], match[4], match[5] ?? undefined);
+      const close = to24h(match[6], match[7], match[8] ?? undefined);
+
+      const days = expandDayRange(startDay, endDay);
+      for (const day of days) {
+        if (!result[day]) {
+          result[day] = { open, close };
+        }
       }
     }
-  }
+  };
 
+  processMatches(dayRegexAfter);
+  processMatches(dayRegexBefore);
+
+  // Daily fallback (unchanged)
   const dailyRegex =
     /(daily|every day|open daily|open every day|open daily|open every day)(?:\s*[:–—-])?\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*[-–—]\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i;
   const dailyMatch = dailyRegex.exec(normalized);
