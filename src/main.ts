@@ -2,21 +2,23 @@ import fs from 'fs/promises';
 import path from 'path';
 import { loadSharedSchema } from './schema-loader.js';
 import { processEvents } from './processor.js';
+import { logInfo, logWarn, logError } from './utils.js';
 import type { SourceEvent } from './types.js';
 
 const SOURCE_FILE = 'datathistle json sample .json';
 const ENV_FILE = '.env.local';
 
 process.on('unhandledRejection', (reason) => {
-  console.error('UNHANDLED REJECTION:', reason);
+  const detail = reason && typeof reason === 'object' && 'message' in reason ? (reason as Error).message : String(reason);
+  logError(`UNHANDLED REJECTION: ${detail}`, 'main');
   if (reason && typeof reason === 'object' && 'stack' in reason) {
-    console.error('stacktrace:', (reason as Error).stack);
+    logError(`stacktrace: ${(reason as Error).stack}`, 'main');
   }
 });
 process.on('uncaughtException', (error) => {
-  console.error('UNCAUGHT EXCEPTION:', error);
+  logError(`UNCAUGHT EXCEPTION: ${(error as Error).message}`, 'main');
   if (error && typeof error === 'object' && 'stack' in error) {
-    console.error('stacktrace:', (error as Error).stack);
+    logError(`stacktrace: ${(error as Error).stack}`, 'main');
   }
 });
 
@@ -40,7 +42,7 @@ async function loadEnvFile(filename: string): Promise<void> {
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-      console.warn(`Failed to load ${filename}:`, (error as Error).message);
+      logWarn(`Failed to load ${filename}: ${(error as Error).message}`, 'main');
     }
   }
 }
@@ -53,7 +55,7 @@ async function main(): Promise<void> {
       await fs.access(DEFAULT_CHROMIUM_PATH);
       process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH = DEFAULT_CHROMIUM_PATH;
     } catch {
-      console.warn('Chromium executable not found at default path; please set PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH.');
+      logWarn('Chromium executable not found at default path; please set PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH.', 'main');
     }
   }
   await loadSharedSchema();
@@ -70,12 +72,11 @@ async function main(): Promise<void> {
   const exportName = `processed-datathistle-${new Date().toISOString().slice(0, 10)}.json`;
   const exportPath = path.resolve(process.cwd(), exportName);
   await fs.writeFile(exportPath, `${JSON.stringify(activities, null, 2)}\n`, 'utf-8');
-  console.log(`Wrote ${activities.length} valid activities to ${exportName}`);
-  if (skipped.length) {
-    console.log(`Skipped ${skipped.length} records (${skipped.map((item) => item.reason).join('; ')})`);
-  } else {
-    console.log('No records were skipped.');
-  }
+  const skipSummary =
+    skipped.length > 0
+      ? `skipped ${skipped.length} records with reasons: ${skipped.map((item) => item.reason).join('; ')}`
+      : 'skipped 0 records';
+  logInfo(`Processed ${activities.length} activities, wrote ${exportName}, ${skipSummary}`, 'main');
 }
 
 async function bootstrap(): Promise<void> {
@@ -88,10 +89,10 @@ void bootstrap().catch((error) => {
     error && typeof error === 'object' && 'message' in error
       ? (error as Error).message
       : String(error);
-  console.error('Processing failed:', detail);
-  console.error('Full error dump:', error);
+  logError(`Processing failed: ${detail}`, 'main');
+  logError(`Full error dump: ${error}`, 'main');
   if (error && typeof error === 'object' && 'stack' in error) {
-    console.error('Stack trace:', (error as Error).stack);
+    logError(`Stack trace: ${(error as Error).stack}`, 'main');
   }
   process.exitCode = 1;
 });

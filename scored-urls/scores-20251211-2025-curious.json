@@ -1,0 +1,26 @@
+{
+  "eventId": "05ee919c-161f-9a69-07a8-73060018426a",
+  "eventName": "Curious About Covent Garden",
+  "pageScores": [
+    {
+      "url": "https://www.curiousabout.co.uk/faqs.html",
+      "score": 140
+    },
+    {
+      "url": "http://www.curiousabout.co.uk/",
+      "score": 130
+    }
+  ],
+  "scores": [
+    {
+      "url": "https://www.curiousabout.co.uk/faqs.html",
+      "score": 1000
+    },
+    {
+      "url": "http://www.curiousabout.co.uk/",
+      "score": 587.5
+    }
+  ],
+  "deepScrapeUrl": null,
+  "generatedAt": "2025-12-11T20:25:02.394Z"
+}

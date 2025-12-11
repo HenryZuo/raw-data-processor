@@ -1,3 +1,13 @@
+import type { Exception as SharedException } from '../../london-kids-p1/packages/shared/src/activity.js';
+
+export const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
+export type DayLabel = typeof DAY_LABELS[number];
+
+export interface JsonLdHoursResult {
+  hours: Partial<Record<DayLabel, { open: string; close: string } | { closed: true }>>;
+  exceptions?: SharedException[];
+}
+
 export interface SourceLink {
   url: string;
   type?: string;
@@ -27,6 +37,14 @@ export interface SourcePlace {
   lat?: number | null;
   lon?: number | null;
   lng?: number | null;
+}
+
+export interface RawDateTimeInstance {
+  date: string;
+  startTime?: string;
+  endTime?: string;
+  location?: string;
+  note?: string;
 }
 
 export interface SourceSchedule {
@@ -64,6 +82,8 @@ export interface PageScrapeResult {
     extractedAge?: string;
     extractedPrice?: string;
     extractedDescription?: string;
+    jsonLdHours?: JsonLdHoursResult;
   };
   html?: string;
+  deepDateTimeData?: RawDateTimeInstance[];
 }

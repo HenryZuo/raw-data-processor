@@ -7,13 +7,15 @@ import {
   formatExportTimestamp,
   sanitizeNameForFilename,
   cleanText,
+  logDebug,
+  logWarn,
+  logError,
 } from './utils.js';
 import type { PageScrapeResult, SourceEvent } from './types.js';
 import type { Dates } from '../../london-kids-p1/packages/shared/src/activity.js';
 
 export interface ActivityLLMOutput {
   contentMatchesDescription: boolean;
-  type: 'event' | 'place';
   summary: string;
   officialAgeAvailable: boolean;
   minAge: number;
@@ -30,32 +32,17 @@ Return ONLY a valid JSON object. No markdown, no explanations.
 
 CRITICAL MATCH CHECK:
 - Strictly compare scraped pages to raw name, tags, schedules, AND descriptions.
-- Look for mismatches in activity type (e.g., film vs. live performance), format (e.g., screening vs. workshop), details (e.g., key participants or themes), or venue.
 - If ANY core mismatch exists, set "contentMatchesDescription": false and return ONLY { "contentMatchesDescription": false }.
-- Mismatch examples:
-  • Raw: "comedy film screening" vs. Pages: "live stage musical" → false
 - If NONE of the pages describe "${eventName}", set "contentMatchesDescription": false.
 
-CRITICAL CLASSIFICATION (only if contentMatchesDescription === true):
-- "type": "place" → ONLY if scraped pages clearly show reliable ongoing opening hours (e.g. "Open daily 10am–6pm", "Mon–Sun 9:30–17:30", visible table, JSON-LD openingHoursSpecification, etc.).
-- If opening hours are missing, hidden in JS widgets, or not visible → classify as "event" (even if it's a permanent attraction like a zoo or museum).
-- NEVER classify as "place" just because raw DataThistle performances exist.
-
-"type": "event" | "place"
-  → "event" = one-off shows, workshops, timed tickets, OR permanent venues without visible ongoing hours
-  → "place" = permanent attractions with clear ongoing opening hours only
-
-"summary": string, 25–45 words — exciting, family-focused, enticing!
-
-"officialAgeAvailable": boolean (true only if site explicitly states age range like "suitable for ages 5–12")
-
-"minAge" / "maxAge": integers 0–18
+OUTPUT SPECIFICATION (only when contentMatchesDescription === true):
+- "summary": string, 25–45 words — exciting, family-focused, enticing!
+- "officialAgeAvailable": boolean (true only if site explicitly states age guidance like "suitable for ages 5–12")
+- "minAge" / "maxAge": integers 0–18
   → If officialAgeAvailable === true → use the exact numbers stated.
   → If officialAgeAvailable === false → give your best RECOMMENDED realistic age range for this activity (do NOT use 0–18).
-  
-"keywords": array of 32–50 lowercase single words (give plenty, we’ll trim)
-
-"labels": exactly 3 short labels, e.g. ["indoor", "theatre", "christmas"]`;
+- "keywords": array of 32–50 lowercase single words (give plenty, we’ll trim to ≤30).
+- "labels": exactly 3 short labels, e.g. ["indoor", "theatre", "christmas"].`;
 
 const GROQ_MODEL = process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile';
 const DEFAULT_GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
@@ -110,7 +97,7 @@ export async function callGroqAPI(
     );
 
     if (!response.ok) {
-      console.error('Groq error:', responseText);
+      logError(`Groq error: ${responseText}`, eventId);
       throw new Error(`Groq ${response.status}: ${responseText}`);
     }
 
@@ -160,7 +147,7 @@ export async function exportGroqInteraction(
     };
     await fs.writeFile(filePath, `${JSON.stringify(entry, null, 2)}\n`, 'utf-8');
   } catch (error) {
-    console.warn('Failed to export Groq interaction:', (error as Error).message);
+    logWarn(`Failed to export Groq interaction: ${(error as Error).message}`, eventId);
   }
 }
 
@@ -173,7 +160,6 @@ export function normalizeLLMOutput(raw: unknown): ActivityLLMOutput {
   if (candidate.contentMatchesDescription !== true) {
     return {
       contentMatchesDescription: false,
-      type: 'event',
       summary: '',
       officialAgeAvailable: false,
       minAge: 0,
@@ -181,11 +167,6 @@ export function normalizeLLMOutput(raw: unknown): ActivityLLMOutput {
       keywords: [],
       labels: [],
     };
-  }
-
-  const type = candidate.type;
-  if (type !== 'event' && type !== 'place') {
-    throw new Error('Invalid type from LLM');
   }
 
   const summaryRaw = String(candidate.summary ?? '').trim();
@@ -207,7 +188,7 @@ export function normalizeLLMOutput(raw: unknown): ActivityLLMOutput {
     .filter((value) => value.length > 1);
 
   if (keywords.length < 20) {
-    console.warn(`LLM gave only ${keywords.length} keywords → padding to 20`);
+    logDebug(`LLM gave only ${keywords.length} keywords → padding to 20`, 'llm');
     const fillers = [
       'london',
       'family',
@@ -255,7 +236,6 @@ export function normalizeLLMOutput(raw: unknown): ActivityLLMOutput {
 
   return {
     contentMatchesDescription: true,
-    type,
     summary,
     officialAgeAvailable,
     minAge,
@@ -312,30 +292,6 @@ function formatRawDescriptions(event: SourceEvent): string {
     .join('\n\n');
 }
 
-const POST_LLM_CONFLICTS = [
-  { raw: ['film', 'movie', 'screening', 'cinema'], llm: ['theatre', 'musical', 'stage', 'drama'] },
-  { raw: ['workshop', 'class', 'hands-on'], llm: ['exhibition', 'gallery', 'installation', 'art'] },
-  { raw: ['outdoor', 'park', 'walk', 'nature'], llm: ['indoor', 'gallery', 'museum', 'show'] },
-];
-
-function hasPostLLMConflict(event: SourceEvent, output: ActivityLLMOutput): boolean {
-  const rawTags = new Set((event.tags ?? []).map((tag) => tag.toLowerCase()));
-  const llmTerms = new Set(
-    [...output.keywords, ...output.labels]
-      .map((term) => String(term ?? '').toLowerCase().trim())
-      .filter((term) => term.length > 0),
-  );
-  for (const conflict of POST_LLM_CONFLICTS) {
-    if (
-      conflict.raw.some((tag) => rawTags.has(tag)) &&
-      conflict.llm.some((term) => llmTerms.has(term))
-    ) {
-      return true;
-    }
-  }
-  return false;
-}
-
 export async function fetchLLMDataWithRetries(
   event: SourceEvent,
   scrapedPages: PageScrapeResult[],
@@ -345,18 +301,20 @@ export async function fetchLLMDataWithRetries(
   for (let attempt = 1; attempt <= MAX_GROQ_ATTEMPTS; attempt += 1) {
     try {
       const llmOutput = await callGroqAPI(prompt, apiKey, event.event_id, attempt, event.name);
-      if (llmOutput.contentMatchesDescription && hasPostLLMConflict(event, llmOutput)) {
-        console.warn(`[${event.event_id}] Post-LLM mismatch override: Raw tags conflict with LLM output.`);
-        return null;
-      }
       return llmOutput;
     } catch (error) {
-      console.warn(`Groq attempt ${attempt} for ${event.event_id} failed:`, (error as Error).message);
+      logDebug(
+        `Groq attempt ${attempt} for ${event.event_id} failed: ${(error as Error).message}`,
+        event.event_id,
+      );
       if (attempt < MAX_GROQ_ATTEMPTS) {
         await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
       }
     }
   }
-  console.warn(`Groq failed after ${MAX_GROQ_ATTEMPTS} attempts for ${event.event_id} — SKIPPING EVENT`);
+  logDebug(
+    `Groq failed after ${MAX_GROQ_ATTEMPTS} attempts for ${event.event_id} — SKIPPING EVENT`,
+    event.event_id,
+  );
   return null;
 }

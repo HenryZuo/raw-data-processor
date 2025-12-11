@@ -1,4 +1,4 @@
-import { cleanText, normalizeCandidateUrl, isBookingDomain } from './utils.js';
+import { cleanText, normalizeCandidateUrl, isBookingDomain, logDebug } from './utils.js';
 import type { SourceEvent } from './types.js';
 
 const OFFICIAL_SIGNAL_REGEX = /official|book tickets|opening times|visit us|family|kids|age \d|merlin|©/i;
@@ -44,18 +44,18 @@ async function verifyCandidateUrl(url: string, event: SourceEvent): Promise<bool
   try {
     const head = await fetch(url, { method: 'HEAD', redirect: 'follow', signal: AbortSignal.timeout(8_000) });
     if (!head.ok || !head.headers.get('content-type')?.includes('text/html')) {
-      console.log(`[${event.event_id}] ${url} failed HEAD/content-type check`);
+      logDebug(`${url} failed HEAD/content-type check`, event.event_id);
       return false;
     }
 
     const res = await fetch(url, { signal: AbortSignal.timeout(12_000) });
     if (!res.ok) {
-      console.log(`[${event.event_id}] ${url} failed fetch status ${res.status}`);
+      logDebug(`${url} failed fetch status ${res.status}`, event.event_id);
       return false;
     }
     const buffer = await res.arrayBuffer();
     if (buffer.byteLength < 5000) {
-      console.log(`[${event.event_id}] ${url} rejected because the HTML was too small (${buffer.byteLength} bytes)`);
+      logDebug(`${url} rejected because the HTML was too small (${buffer.byteLength} bytes)`, event.event_id);
       return false;
     }
 
@@ -71,7 +71,7 @@ async function verifyCandidateUrl(url: string, event: SourceEvent): Promise<bool
       (normalizedName.length >= 3 && html.includes(normalizedName)) ||
       tokens.some((token) => html.includes(token));
     if (!hasName) {
-      console.log(`[${event.event_id}] ${url} rejected because the activity name is missing from HTML`);
+      logDebug(`${url} rejected because the activity name is missing from HTML`, event.event_id);
       return false;
     }
     const descriptionTokens = new Set<string>();
@@ -92,26 +92,28 @@ async function verifyCandidateUrl(url: string, event: SourceEvent): Promise<bool
     const hostnameSlim = hostname.replace(/[^a-z0-9]+/g, '');
     const hostnameMatches = !normalizedHostname || hostnameSlim.includes(normalizedHostname);
     if (!hostnameMatches) {
-      console.log(
-        `[${event.event_id}] hostname "${hostname}" lacks normalized activity "${normalizedHostname}", but continuing because signals may suffice.`,
+      logDebug(
+        `hostname "${hostname}" lacks normalized activity "${normalizedHostname}", but continuing because signals may suffice.`,
+        event.event_id,
       );
     }
     const tagLookup = new Set((event.tags ?? []).map((tag) => tag.toLowerCase()));
     if (tagLookup.has('film') && (html.includes('musical') || html.includes('theatre'))) {
-      console.log(`[${event.event_id}] rejected ${url} because film tags clash with musical/theatre content`);
+      logDebug(`rejected ${url} because film tags clash with musical/theatre content`, event.event_id);
       return false;
     }
 
     const signalCount = [hasDescriptionMatch, hasOfficialSignal, noAggregator].filter(Boolean).length;
     const passed = signalCount >= 3;
-    console.log(
-      `[verify] ${url} → name: ${hasName ? 'yes' : 'no'}, desc: ${hasDescriptionMatch ? 'yes' : 'no'}, official: ${
+    logDebug(
+      `verify ${url} → name: ${hasName ? 'yes' : 'no'}, desc: ${hasDescriptionMatch ? 'yes' : 'no'}, official: ${
         hasOfficialSignal ? 'yes' : 'no'
       }, noAggregator: ${noAggregator ? 'yes' : 'no'} → ${passed ? 'ACCEPTED' : 'REJECTED'}`,
+      event.event_id,
     );
     return passed;
   } catch (error) {
-    console.log(`[${event.event_id}] verification for ${url} failed: ${(error as Error).message}`);
+    logDebug(`verification for ${url} failed: ${(error as Error).message}`, event.event_id);
     return false;
   }
 }
@@ -179,7 +181,7 @@ function buildSearchQuery(event: SourceEvent): string {
 async function fetchSerpLinks(query: string): Promise<string[]> {
   const apiKey = process.env.SERPAPI_KEY;
   if (!apiKey) {
-    console.warn('SERPAPI_KEY missing; skipping SerpAPI search for official URL.');
+    logDebug('SERPAPI_KEY missing; skipping SerpAPI search for official URL.', 'url-resolver');
     return [];
   }
 
@@ -192,7 +194,7 @@ async function fetchSerpLinks(query: string): Promise<string[]> {
     });
     const response = await fetch(`${SERP_API_URL}?${params.toString()}`);
     if (!response.ok) {
-      console.warn('SerpAPI request failed:', response.statusText);
+      logDebug(`SerpAPI request failed: ${response.statusText}`, 'url-resolver');
       return [];
     }
 
@@ -202,7 +204,7 @@ async function fetchSerpLinks(query: string): Promise<string[]> {
       .map((item) => item.link)
       .filter((link): link is string => Boolean(link));
   } catch (error) {
-    console.warn('SerpAPI fetch error:', (error as Error).message);
+    logDebug(`SerpAPI fetch error: ${(error as Error).message}`, 'url-resolver');
     return [];
   }
 }
@@ -251,7 +253,7 @@ async function evaluateCandidateList(
   const normalizedActivityHostname = normalizeActivityForHostname(event.name);
 
   for (const candidate of candidates) {
-    console.log(`[${event.event_id}] evaluating candidate ${candidate}`);
+    logDebug(`evaluating candidate ${candidate}`, event.event_id);
     const normalized = normalizeCandidateUrl(candidate);
     if (!normalized || seen.has(normalized) || isBookingDomain(normalized)) {
       continue;
@@ -304,10 +306,10 @@ export async function resolveOfficialUrl(event: SourceEvent): Promise<string | n
     const normalized = normalizeCandidateUrl(website);
     if (normalized) {
       if (isBookingDomain(normalized)) {
-        console.log(`[${eventId}] rejected DataThistle website ${normalized} because it points to a booking domain.`);
+        logDebug(`rejected DataThistle website ${normalized} because it points to a booking domain.`, eventId);
       } else {
         officialUrl = normalizeToRootUrl(normalized);
-        console.log(`[${eventId}] using trusted DataThistle website ${officialUrl}`);
+        logDebug(`using trusted DataThistle website ${officialUrl}`, eventId);
         OFFICIAL_URL_CACHE.set(eventId, officialUrl);
         return officialUrl;
       }
@@ -319,7 +321,7 @@ export async function resolveOfficialUrl(event: SourceEvent): Promise<string | n
     const verifiedRaw = await evaluateCandidateList(rawUrls, event, preferredHosts);
     if (verifiedRaw.length > 0) {
       officialUrl = normalizeToRootUrl(verifiedRaw[0].url);
-      console.log(`[${eventId}] selected best candidate from event links: ${officialUrl}`);
+      logDebug(`selected best candidate from event links: ${officialUrl}`, eventId);
       OFFICIAL_URL_CACHE.set(eventId, officialUrl);
       return officialUrl;
     }
@@ -327,8 +329,8 @@ export async function resolveOfficialUrl(event: SourceEvent): Promise<string | n
 
   const query = buildSearchQuery(event);
   let candidates = filterAndLimitSerpLinks(await fetchSerpLinks(query));
-  if (candidates.length < 3) {
-    console.log(`[${eventId}] only ${candidates.length} SERP candidates; retrying with simplified query`);
+    if (candidates.length < 3) {
+      logDebug(`only ${candidates.length} SERP candidates; retrying with simplified query`, eventId);
     const fallbackQuery = `${cleanSearchName(event.name)} London official site`;
     const fallbackLinks = filterAndLimitSerpLinks(await fetchSerpLinks(fallbackQuery));
     const merged = Array.from(new Set([...candidates, ...fallbackLinks]));
@@ -377,8 +379,9 @@ export async function resolveOfficialUrl(event: SourceEvent): Promise<string | n
         (host) => CINEMA_HOSTNAMES.includes(host) || CINEMA_HOSTNAMES.some((p) => host.includes(p)),
       );
       if (cinemaHosts.length >= 2) {
-        console.log(
-          `[${event.event_id}] SKIPPING dispersed film – multiple cinema venues: ${cinemaHosts.join(', ')}`,
+        logDebug(
+          `SKIPPING dispersed film – multiple cinema venues: ${cinemaHosts.join(', ')}`,
+          event.event_id,
         );
         OFFICIAL_URL_CACHE.set(eventId, null);
         return null;
@@ -389,7 +392,7 @@ export async function resolveOfficialUrl(event: SourceEvent): Promise<string | n
 
   if (verifiedCandidates.length > 0) {
     officialUrl = normalizeToRootUrl(verifiedCandidates[0].url);
-    console.log(`[${eventId}] Selected best URL: ${officialUrl}`);
+        logDebug(`Selected best URL: ${officialUrl}`, eventId);
   }
 
   OFFICIAL_URL_CACHE.set(eventId, officialUrl);

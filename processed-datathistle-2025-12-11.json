@@ -1,0 +1,364 @@
+[
+  {
+    "id": "4862ef5c-197d-5907-58fe-9fd500164403--place",
+    "name": "Shrek's Adventure",
+    "summary": "Join Shrek on a magical adventure with a flying bus and more",
+    "priceLevel": "££",
+    "age": {
+      "officialAgeAvailable": true,
+      "minAge": 6,
+      "maxAge": 12
+    },
+    "url": "https://www.shreksadventure.com/plan-your-visit/before-you-visit/opening-hours/",
+    "source": "datathistle",
+    "lastUpdate": "2025-12-11T20:24:52.442Z",
+    "keywords": [
+      "shrek",
+      "adventure",
+      "london",
+      "family",
+      "fun",
+      "days",
+      "out",
+      "kids",
+      "theatre",
+      "dreamworks",
+      "kungfu",
+      "panda",
+      "dragon",
+      "ogre",
+      "fairytales",
+      "witches",
+      "princesses",
+      "donkeys",
+      "magic",
+      "bus",
+      "maze",
+      "insanity",
+      "mirror",
+      "fortune",
+      "tellers"
+    ],
+    "labels": [
+      "indoor",
+      "theatre",
+      "family"
+    ],
+    "imageUrl": "https://files.datathistle.com/images/2019/11/19/98ca8a1b-c8e1-4d6b-abe5-39fcfc3bda6f-1211851-tablet-landscape-large-16-9-LST379039.jpg",
+    "dates": {
+      "kind": "place",
+      "location": {
+        "addressLine": "County Hall, Belvedere Road, London, SE1 7PB",
+        "postcode": "SE1 7PB",
+        "city": "London",
+        "country": "United Kingdom",
+        "lat": 51.5028,
+        "lng": -0.11926,
+        "area": "South London"
+      },
+      "openingHours": {
+        "Sun": {
+          "open": "10:00",
+          "close": "16:00"
+        },
+        "Mon": {
+          "open": "10:00",
+          "close": "16:00"
+        },
+        "Tue": {
+          "open": "10:00",
+          "close": "16:00"
+        },
+        "Wed": {
+          "open": "10:00",
+          "close": "15:00"
+        },
+        "Thu": {
+          "open": "11:00",
+          "close": "15:00"
+        },
+        "Fri": {
+          "open": "11:00",
+          "close": "16:00"
+        },
+        "Sat": {
+          "open": "10:00",
+          "close": "16:00"
+        }
+      },
+      "exceptions": [
+        {
+          "status": "closed",
+          "date": "2025-12-01"
+        },
+        {
+          "status": "closed",
+          "date": "2025-12-02"
+        },
+        {
+          "status": "closed",
+          "date": "2025-12-03"
+        },
+        {
+          "status": "closed",
+          "date": "2025-12-04"
+        },
+        {
+          "status": "closed",
+          "date": "2025-12-05"
+        },
+        {
+          "status": "closed",
+          "date": "2025-12-06"
+        },
+        {
+          "status": "closed",
+          "date": "2025-12-07"
+        },
+        {
+          "status": "closed",
+          "date": "2025-12-08"
+        },
+        {
+          "status": "closed",
+          "date": "2025-12-09"
+        },
+        {
+          "status": "closed",
+          "date": "2025-12-10"
+        },
+        {
+          "status": "open",
+          "date": "2025-12-11",
+          "open": "11:00",
+          "close": "15:00"
+        },
+        {
+          "status": "open",
+          "date": "2025-12-12",
+          "open": "10:00",
+          "close": "15:00"
+        },
+        {
+          "status": "open",
+          "date": "2025-12-13",
+          "open": "10:00",
+          "close": "16:00"
+        },
+        {
+          "status": "open",
+          "date": "2025-12-14",
+          "open": "10:00",
+          "close": "16:00"
+        },
+        {
+          "status": "open",
+          "date": "2025-12-15",
+          "open": "10:00",
+          "close": "15:00"
+        },
+        {
+          "status": "open",
+          "date": "2025-12-16",
+          "open": "10:00",
+          "close": "15:00"
+        },
+        {
+          "status": "open",
+          "date": "2025-12-17",
+          "open": "10:00",
+          "close": "15:00"
+        },
+        {
+          "status": "open",
+          "date": "2025-12-18",
+          "open": "11:00",
+          "close": "15:00"
+        },
+        {
+          "status": "open",
+          "date": "2025-12-19",
+          "open": "10:00",
+          "close": "15:00"
+        },
+        {
+          "status": "open",
+          "date": "2025-12-20",
+          "open": "10:00",
+          "close": "16:00"
+        },
+        {
+          "status": "open",
+          "date": "2025-12-21",
+          "open": "10:00",
+          "close": "16:00"
+        },
+        {
+          "status": "open",
+          "date": "2025-12-22",
+          "open": "10:00",
+          "close": "16:00"
+        },
+        {
+          "status": "open",
+          "date": "2025-12-23",
+          "open": "10:00",
+          "close": "16:00"
+        },
+        {
+          "status": "open",
+          "date": "2025-12-24",
+          "open": "10:00",
+          "close": "15:00"
+        },
+        {
+          "status": "closed",
+          "date": "2025-12-25"
+        },
+        {
+          "status": "open",
+          "date": "2025-12-26",
+          "open": "11:00",
+          "close": "16:00"
+        },
+        {
+          "status": "open",
+          "date": "2025-12-27",
+          "open": "10:00",
+          "close": "16:00"
+        },
+        {
+          "status": "open",
+          "date": "2025-12-28",
+          "open": "10:00",
+          "close": "16:00"
+        },
+        {
+          "status": "open",
+          "date": "2025-12-29",
+          "open": "10:00",
+          "close": "16:00"
+        },
+        {
+          "status": "open",
+          "date": "2025-12-30",
+          "open": "10:00",
+          "close": "16:00"
+        },
+        {
+          "status": "open",
+          "date": "2025-12-31",
+          "open": "10:00",
+          "close": "15:00"
+        }
+      ]
+    }
+  },
+  {
+    "id": "05ee919c-161f-9a69-07a8-73060018426a--event",
+    "name": "Curious About Covent Garden",
+    "summary": "Explore Covent Garden with a treasure hunt theme, suitable for families and all ages",
+    "priceLevel": "££",
+    "age": {
+      "officialAgeAvailable": true,
+      "minAge": 5,
+      "maxAge": 12
+    },
+    "url": "http://www.curiousabout.co.uk/",
+    "source": "datathistle",
+    "lastUpdate": "2025-12-11T20:25:03.720Z",
+    "keywords": [
+      "covent",
+      "garden",
+      "treasure",
+      "hunt",
+      "walks",
+      "family",
+      "friendly",
+      "adventure",
+      "exploration",
+      "discovery",
+      "history",
+      "landmarks",
+      "hidden",
+      "gems",
+      "london",
+      "uk",
+      "england",
+      "self-guided",
+      "curious",
+      "fun",
+      "entertaining",
+      "educational",
+      "outdoor",
+      "activity"
+    ],
+    "labels": [
+      "outdoor",
+      "family",
+      "adventure"
+    ],
+    "imageUrl": "https://files.datathistle.com/images/2020/08/20/50159e53-df56-4c32-807c-9f7b797a98ed-LST403568.jpg",
+    "dates": {
+      "kind": "event",
+      "instances": [
+        {
+          "date": "2025-12-25",
+          "startTime": "00:00",
+          "endTime": "00:00",
+          "location": {
+            "addressLine": "Seven Dials District, Covent Gardens, London, WC2H 9DA",
+            "postcode": "WC2H 9DA",
+            "city": "London",
+            "country": "United Kingdom",
+            "lat": 51.51472,
+            "lng": -0.12789,
+            "area": "Greater London"
+          }
+        },
+        {
+          "date": "2026-01-11",
+          "startTime": "00:00",
+          "endTime": "00:00",
+          "location": {
+            "addressLine": "Seven Dials District, Covent Gardens, London, WC2H 9DA",
+            "postcode": "WC2H 9DA",
+            "city": "London",
+            "country": "United Kingdom",
+            "lat": 51.51472,
+            "lng": -0.12789,
+            "area": "Greater London"
+          }
+        },
+        {
+          "date": "2025-12-12",
+          "startTime": "00:00",
+          "endTime": "00:00",
+          "location": {
+            "addressLine": "Seven Dials District, Covent Gardens, London, WC2H 9DA",
+            "postcode": "WC2H 9DA",
+            "city": "London",
+            "country": "United Kingdom",
+            "lat": 51.51472,
+            "lng": -0.12789,
+            "area": "Greater London"
+          }
+        },
+        {
+          "date": "2025-12-14",
+          "startTime": "00:00",
+          "endTime": "00:00",
+          "location": {
+            "addressLine": "Seven Dials District, Covent Gardens, London, WC2H 9DA",
+            "postcode": "WC2H 9DA",
+            "city": "London",
+            "country": "United Kingdom",
+            "lat": 51.51472,
+            "lng": -0.12789,
+            "area": "Greater London"
+          }
+        }
+      ]
+    }
+  }
+]

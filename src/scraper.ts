@@ -1,9 +1,32 @@
 import { chromium } from 'playwright';
-import type { Browser, LaunchOptions, Route as PlaywrightRoute } from 'playwright-core';
+import type { Browser, LaunchOptions, Page, Response, Route as PlaywrightRoute } from 'playwright-core';
 import { existsSync } from 'node:fs';
-import { cleanText, extractDatesAndTimesFromPage, extractOpeningHours } from './utils.js';
+import {
+  cleanText,
+  extractCalendarExceptionsFromText,
+  extractDatesAndTimesFromPage,
+  extractOpeningHours,
+  hasActualTimeInfo,
+  classifyDateTimeFormat,
+  extractRawDateTimeInstancesFromPage,
+  parseAndClassifyDates,
+  normalizeCalendarApiPayload,
+  logDebug,
+  isUrlValidAndHtml,
+  quickPreScoreUrl,
+  generateSmartHoursGuesses,
+  parseTimeTo24h,
+  ensureIsoDate,
+} from './utils.js';
 import { normalizeActivityForHostname } from './url-resolver.js';
-import type { PageScrapeResult } from './types.js';
+import { DAY_LABELS } from './types.js';
+import type { DayLabel, JsonLdHoursResult, PageScrapeResult, RawDateTimeInstance } from './types.js';
+import type {
+  Dates,
+  Exception as SharedException,
+  Location as SharedLocation,
+  PlaceDates,
+} from '../../london-kids-p1/packages/shared/src/activity.js';
 
 function scoreUrlForTimeInfo(page: PageScrapeResult): number {
   let score = 0;
@@ -36,28 +59,25 @@ function scoreUrlForTimeInfo(page: PageScrapeResult): number {
   urlBoosts.forEach((kw) => {
     if (url.includes(kw)) score += 20;
   });
-  score -= (url.split('/').length - 3) * 10;
+  score += /(opening hours|opening times|visit us|plan your visit).*hours/i.test(title) ? 80 : 0;
+  if (text.includes('ticket') || text.includes('price') || text.includes('book now') || text.includes('£')) {
+    score -= 120;
+  }
+  score -= (url.split('/').length - 3) * 5;
 
-  return Math.min(score, 1000);
-}
-
-function hasActualTimeInfo(page: PageScrapeResult): boolean {
-  const parsed = extractDatesAndTimesFromPage(page.text, page.url);
-
-  if (parsed.source === 'none') return false;
-
-  if (parsed.openingHours) {
-    const daysWithHours = Object.values(parsed.openingHours).filter(
-      (h) => h.open && h.close && h.open !== h.close,
-    );
-    return daysWithHours.length >= 2;
+  const extractable = hasActualTimeInfo(page);
+  if (extractable) {
+    score *= 2.5;
+  } else {
+    score *= 0.4;
   }
 
-  if (parsed.eventInstances && parsed.eventInstances.length > 0) {
-    return parsed.eventInstances.some((inst) => Boolean(inst.startTime));
-  }
-
-  return true;
+  const finalScore = Math.min(Math.max(score, 0), 1500);
+  logDebug(
+    `[HOURS SCORE] ${page.url} → raw:${score.toFixed(0)} → final:${finalScore.toFixed(0)} (extractable=${extractable})`,
+    page.url,
+  );
+  return finalScore;
 }
 
 const SCRAPE_TIMEOUT_MS = 15_000;
@@ -93,34 +113,260 @@ export function parseJsonLd(jsonLdStrings: string[]): Record<string, unknown>[] 
   return parsed;
 }
 
-function parseJsonLdHours(spec: any[]): Record<string, { open: string; close: string }> | null {
-  const result: Record<string, { open: string; close: string }> = {};
-  for (const item of spec) {
-    if (!item?.opens || !item?.closes) continue;
-    const days = Array.isArray(item.dayOfWeek) ? item.dayOfWeek : [item.dayOfWeek];
-    for (const d of days) {
-      const day =
-        d?.includes('Monday')
-          ? 'Mon'
-          : d?.includes('Tuesday')
-          ? 'Tue'
-          : d?.includes('Wednesday')
-          ? 'Wed'
-          : d?.includes('Thursday')
-          ? 'Thu'
-          : d?.includes('Friday')
-          ? 'Fri'
-          : d?.includes('Saturday')
-          ? 'Sat'
-          : d?.includes('Sunday')
-          ? 'Sun'
-          : null;
-      if (day) {
-        result[day] = { open: String(item.opens).slice(0, 5), close: String(item.closes).slice(0, 5) };
+function parseJsonLdHours(specEntries: any[]): JsonLdHoursResult | null {
+  if (!specEntries?.length) return null;
+
+  const hours: Partial<Record<DayLabel, { open: string; close: string } | { closed: true }>> = {};
+  const exceptions = new Map<string, SharedException>();
+
+  const dayAlias: Record<string, DayLabel> = {
+    sun: 'Sun',
+    sunday: 'Sun',
+    mon: 'Mon',
+    monday: 'Mon',
+    tue: 'Tue',
+    tuesday: 'Tue',
+    wed: 'Wed',
+    wednesday: 'Wed',
+    thu: 'Thu',
+    thursday: 'Thu',
+    fri: 'Fri',
+    friday: 'Fri',
+    sat: 'Sat',
+    saturday: 'Sat',
+  };
+
+  const normalizeDay = (token: string): DayLabel | null => {
+    if (!token) return null;
+    const cleaned = token
+      .replace(/https?:\/\/schema\.org\//i, '')
+      .replace(/[^a-z]/gi, '')
+      .toLowerCase();
+    return dayAlias[cleaned] ?? null;
+  };
+
+  const expandDayRange = (start: DayLabel, end: DayLabel): DayLabel[] => {
+    const order = DAY_LABELS;
+    const startIdx = order.indexOf(start);
+    const endIdx = order.indexOf(end);
+    if (startIdx === -1 || endIdx === -1) return [start];
+    const days: DayLabel[] = [];
+    let index = startIdx;
+    do {
+      days.push(order[index]);
+      if (index === endIdx) break;
+      index = (index + 1) % order.length;
+    } while (days.length < order.length);
+    return days;
+  };
+
+  const parseDays = (value: unknown): DayLabel[] => {
+    const collected: DayLabel[] = [];
+    const capture = (day: DayLabel | null) => {
+      if (day && !collected.includes(day)) {
+        collected.push(day);
+      }
+    };
+    const processToken = (token: string) => {
+      if (!token) return;
+      if (token.includes('-')) {
+        const [start, end] = token.split('-').map((segment) => segment.trim());
+        const startLabel = normalizeDay(start);
+        const endLabel = normalizeDay(end);
+        if (startLabel && endLabel) {
+          expandDayRange(startLabel, endLabel).forEach(capture);
+          return;
+        }
+      }
+      capture(normalizeDay(token));
+    };
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (typeof item === 'string') {
+          item.split(/[,;]+/).forEach((token) => processToken(token.trim()));
+        } else if (item && typeof item === 'object') {
+          const text = (item as Record<string, unknown>).name ?? (item as Record<string, unknown>)['@id'];
+          if (typeof text === 'string') {
+            text.split(/[,;]+/).forEach((token) => processToken(token.trim()));
+          }
+        }
+      }
+      return collected;
+    }
+    if (typeof value === 'string') {
+      value.split(/[,;]+/).forEach((token) => processToken(token.trim()));
+      return collected;
+    }
+    if (value && typeof value === 'object') {
+      const text = (value as Record<string, unknown>).name ?? (value as Record<string, unknown>)['@id'];
+      if (typeof text === 'string') {
+        text.split(/[,;]+/).forEach((token) => processToken(token.trim()));
       }
     }
+    return collected;
+  };
+
+  const parseLegacy = (value: string) => {
+    const entries: Array<{ days: DayLabel[]; open?: string; close?: string; closed?: boolean }> = [];
+    const pattern = /([A-Za-z]{2,9}(?:-[A-Za-z]{2,9})?)\s+(\d{1,2}(?::\d{2})?(?:am|pm)?)[\s–—-]+(\d{1,2}(?::\d{2})?(?:am|pm)?)/gi;
+    const segments = value.split(/[;/]/);
+    for (const segment of segments) {
+      let match: RegExpExecArray | null;
+      while ((match = pattern.exec(segment.trim()))) {
+        const daysPart = match[1];
+        const open = parseTimeTo24h(match[2]);
+        const close = parseTimeTo24h(match[3]);
+        entries.push({
+          days: parseDays(daysPart),
+          open: open ?? undefined,
+          close: close ?? undefined,
+          closed: !open || !close || open === close,
+        });
+      }
+    }
+    return entries;
+  };
+
+  const addDayHours = (days: DayLabel[], open?: string, close?: string, closedOverride = false) => {
+    for (const day of days) {
+      if (closedOverride || !open || !close) {
+        hours[day] = { closed: true };
+      } else {
+        hours[day] = { open, close };
+      }
+    }
+  };
+
+  const addException = (entry: SharedException) => {
+    if (!entry.date) return;
+    exceptions.set(entry.date, entry);
+  };
+
+  const applySeasonal = (
+    from: string | undefined,
+    through: string | undefined,
+    days: DayLabel[],
+    closed: boolean,
+    open?: string,
+    close?: string,
+  ) => {
+    const startIso = ensureIsoDate(from ?? '');
+    const endIso = ensureIsoDate(through ?? '');
+    if (!startIso || !endIso) return;
+    const startDate = new Date(`${startIso}T00:00:00`);
+    const endDate = new Date(`${endIso}T00:00:00`);
+    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) return;
+    const cursor = new Date(startDate);
+    while (cursor <= endDate) {
+      const dow = DAY_LABELS[cursor.getDay()];
+      if (days.length && !days.includes(dow)) {
+        cursor.setDate(cursor.getDate() + 1);
+        continue;
+      }
+      const isoDate = cursor.toISOString().split('T')[0];
+      if (closed) {
+        addException({ status: 'closed', date: isoDate });
+      } else if (open && close) {
+        addException({ status: 'open', date: isoDate, open, close });
+      }
+      cursor.setDate(cursor.getDate() + 1);
+    }
+  };
+
+  const resolveTimeValue = (...values: unknown[]): string | undefined => {
+    for (const value of values) {
+      if (typeof value === 'string' && value.trim()) {
+        return value;
+      }
+      if (typeof value === 'number') {
+        return String(value);
+      }
+    }
+    return undefined;
+  };
+
+  const processEntry = (entry: Record<string, unknown>) => {
+    const legacy = typeof entry.openingHours === 'string' ? entry.openingHours : undefined;
+    if (legacy) {
+      parseLegacy(legacy).forEach((item) => {
+        if (item.days.length) {
+          addDayHours(item.days, item.open, item.close, Boolean(item.closed));
+        }
+      });
+    }
+    const days = parseDays(entry.dayOfWeek ?? entry.day ?? entry.days ?? entry['validDay']);
+    const open = parseTimeTo24h(
+      resolveTimeValue(
+        entry.opens,
+        entry.open,
+        entry['startTime'],
+        entry['start'],
+        entry['openingTime'],
+        entry['availableAtOrFrom'],
+      ),
+    );
+    const close = parseTimeTo24h(
+      resolveTimeValue(
+        entry.closes,
+        entry.close,
+        entry['endTime'],
+        entry['end'],
+        entry['closingTime'],
+        entry['availableThrough'],
+      ),
+    );
+    const isClosed = !open || !close || open === close;
+    if (days.length) {
+      addDayHours(days, open ?? undefined, close ?? undefined, isClosed);
+      applySeasonal(
+        entry.validFrom as string | undefined,
+        entry.validThrough as string | undefined,
+        days,
+        isClosed,
+        open ?? undefined,
+        close ?? undefined,
+      );
+    }
+  };
+
+  for (const spec of specEntries) {
+    if (!spec) continue;
+    if (typeof spec === 'string') {
+      parseLegacy(spec).forEach((item) => {
+        if (item.days.length) {
+          addDayHours(item.days, item.open, item.close, Boolean(item.closed));
+        }
+      });
+      continue;
+    }
+    if (Array.isArray(spec)) {
+      spec.forEach((item) => {
+        if (typeof item === 'string') {
+          parseLegacy(item).forEach((entry) => {
+            if (entry.days.length) {
+              addDayHours(entry.days, entry.open, entry.close, Boolean(entry.closed));
+            }
+          });
+        } else if (item && typeof item === 'object') {
+          processEntry(item as Record<string, unknown>);
+        }
+      });
+      continue;
+    }
+    if (typeof spec === 'object') {
+      processEntry(spec as Record<string, unknown>);
+    }
   }
-  return Object.keys(result).length >= 4 ? result : null;
+
+  const finalHours = Object.keys(hours).length ? (hours as Record<DayLabel, { open: string; close: string } | { closed: true }>) : {};
+  const finalExceptions = Array.from(exceptions.values());
+  if (!Object.keys(finalHours).length && !finalExceptions.length) {
+    return null;
+  }
+  return {
+    hours: finalHours,
+    exceptions: finalExceptions.length ? finalExceptions : undefined,
+  };
 }
 
 function normalizeQueueUrl(raw: string): string | null {
@@ -140,7 +386,7 @@ function normalizeQueueUrl(raw: string): string | null {
 
 async function loadSitemap(origin: string, depth = 0): Promise<string[]> {
   if (depth > 3) {
-    console.log(`[Sitemap] Max depth reached for ${origin}`);
+    logDebug(`[Sitemap] Max depth reached for ${origin}`, 'scraper');
     return [];
   }
   try {
@@ -170,12 +416,13 @@ async function loadSitemap(origin: string, depth = 0): Promise<string[]> {
       }
     }
 
-    console.log(
+    logDebug(
       `[Sitemap] Loaded ${urls.length} URLs from ${normalizedOrigin}sitemap.xml (index: ${isIndex}, depth: ${depth})`,
+      'scraper',
     );
     return urls.slice(0, 200);
   } catch (error) {
-    console.warn(`[Sitemap] Failed for ${origin}: ${(error as Error).message}`);
+    logDebug(`[Sitemap] Failed for ${origin}: ${(error as Error).message}`, 'scraper');
     return [];
   }
 }
@@ -245,6 +492,7 @@ const RELEVANT_PATH_KEYWORDS = [
 ];
 const MAX_CRAWL_PAGES = 20;
 const MAX_CRAWL_PAGES_FALLBACK = 60;
+const MIN_URL_PRE_SCORE = 180;
 
 interface CrawlTask {
   id: 'hours' | 'age' | 'price' | 'description';
@@ -291,27 +539,6 @@ const CRAWL_TASKS: CrawlTask[] = [
     textKeywords: [],
     scoreBoost: 30,
   },
-];
-
-const COMMON_ORIGIN_PATHS = [
-  'opening-hours/',
-  'opening-times/',
-  'plan-your-visit/',
-  'visit-us/',
-  'before-you-visit/',
-  'visitor-information/',
-  'daily-hours/',
-  'experience/',
-];
-
-const COMMON_PREFIXES = [
-  'plan-your-visit/',
-  'visitor-information/',
-  'info/',
-  'visit-us/',
-  'before-you-visit/',
-  'prepare-your-visit/',
-  'practical-information/',
 ];
 
 interface ScrapeCandidate {
@@ -453,9 +680,13 @@ async function scrapeSinglePage(url: string, userAgents: string[]): Promise<Scra
         extractedAge: '',
         extractedPrice: '',
         extractedDescription: '',
+        jsonLdHours: undefined,
       };
 
-      const assignIfEmpty = (field: keyof PageScrapeResult['structured'], value?: string) => {
+      const assignIfEmpty = (
+        field: Exclude<keyof PageScrapeResult['structured'], 'jsonLdHours'>,
+        value?: string,
+      ) => {
         if (!value) return;
         if (!structured[field]) {
           structured[field] = cleanText(value);
@@ -554,25 +785,29 @@ async function scrapeSinglePage(url: string, userAgents: string[]): Promise<Scra
         jsonLdMatches.map((match: string) => match.replace(/<script[^>]*>|<\/script>/gi, '')),
       );
 
-      let jsonLdHours: Record<string, { open: string; close: string }> | undefined;
+      let jsonLdHours: JsonLdHoursResult | undefined;
       for (const entry of jsonLdEntriesFromHtml) {
-        const spec = entry.openingHoursSpecification || entry.openingHours;
-        if (Array.isArray(spec)) {
-          const parsed = parseJsonLdHours(spec);
-          if (parsed && Object.keys(parsed).length >= 4) {
-            jsonLdHours = parsed;
-            break;
-          }
+        const rawSpec = entry.openingHoursSpecification ?? entry.openingHours;
+        if (!rawSpec) continue;
+        const specArray = Array.isArray(rawSpec) ? rawSpec : [rawSpec];
+        const parsed = parseJsonLdHours(specArray);
+        if (!parsed) continue;
+        jsonLdHours = parsed;
+        if (Object.keys(parsed.hours ?? {}).length >= 4) {
+          break;
         }
       }
 
+      structured.jsonLdHours = jsonLdHours;
+
       if (jsonLdHours && !structured.extractedHours) {
-        structured.extractedHours = Object.entries(jsonLdHours)
-          .map(([day, { open, close }]) => `${day}: ${open}–${close}`)
+        structured.extractedHours = Object.entries(jsonLdHours.hours ?? {})
+          .filter(([, value]) => value && typeof value === 'object' && 'open' in (value as Record<string, unknown>))
+          .map(([day, value]) => `${day}: ${(value as { open: string }).open}–${(value as { close: string }).close}`)
           .join(', ');
       }
       if (!combinedText) {
-        console.warn(`Scrape returned empty text for ${url}`);
+        logDebug(`Scrape returned empty text for ${url}`, 'scraper');
         continue;
       }
 
@@ -602,8 +837,9 @@ async function scrapeSinglePage(url: string, userAgents: string[]): Promise<Scra
         ),
       );
       if (normalizedSemanticLinks.length) {
-        console.log(
+        logDebug(
           `[Semantic] Found ${normalizedSemanticLinks.length} high-confidence hours link(s) on ${url}`,
+          'scraper',
         );
       }
       const finalTitle = cleanText(scraped.title) || '';
@@ -621,7 +857,10 @@ async function scrapeSinglePage(url: string, userAgents: string[]): Promise<Scra
         semanticHoursLinks: normalizedSemanticLinks,
       };
     } catch (error) {
-      console.warn(`Scrape attempt ${attempt} failed for ${url}:`, (error as Error).message);
+      logDebug(
+        `Scrape attempt ${attempt} failed for ${url}: ${(error as Error).message}`,
+        'scraper',
+      );
     } finally {
       if (browser) {
         await browser.close();
@@ -634,12 +873,103 @@ async function scrapeSinglePage(url: string, userAgents: string[]): Promise<Scra
 export interface OfficialContentResult {
   pages: PageScrapeResult[];
   scoredUrls: { url: string; score: number }[];
+  scores: { url: string; score: number }[];
+  dateTimePage: PageScrapeResult | null;
+  generalPages: PageScrapeResult[];
+  allScrapedPages: PageScrapeResult[];
+  preExtractedDates: Dates | null;
+  preClassifiedType: 'place' | 'event' | null;
+  deepScrapeUrl: string | null;
+}
+
+function aggregateDatesFromPages(
+  pages: PageScrapeResult[],
+  location: SharedLocation,
+): { dates: Dates | null; type: 'place' | 'event' | null } {
+  const allInstances = pages.flatMap((page) =>
+    page.deepDateTimeData && page.deepDateTimeData.length
+      ? page.deepDateTimeData
+      : extractRawDateTimeInstancesFromPage(page, undefined, {
+          jsonLdHours: page.structured.jsonLdHours,
+        }),
+  );
+  const derived = parseAndClassifyDates(allInstances, location);
+  if (derived.dates) {
+    return derived;
+  }
+
+  return aggregateDatesFromChrono(pages, location);
+}
+
+function aggregateDatesFromChrono(
+  pages: PageScrapeResult[],
+  location: SharedLocation,
+): { dates: Dates | null; type: 'place' | 'event' | null } {
+  type ChronoResult = Extract<
+    ReturnType<typeof extractDatesAndTimesFromPage>,
+    { source: 'chrono' }
+  >;
+  const chronoResults = pages
+    .map((page) =>
+      extractDatesAndTimesFromPage(page.text, page.url, {
+        jsonLdHours: page.structured.jsonLdHours,
+      }),
+    )
+    .filter((result): result is ChronoResult => result.source === 'chrono');
+
+  if (!chronoResults.length) {
+    return { dates: null, type: null };
+  }
+
+  let bestPlaceResult: ChronoResult | undefined;
+  let bestDayCount = 0;
+  for (const result of chronoResults) {
+    if (result.openingHours) {
+      const dayCount = Object.keys(result.openingHours).length;
+      if (dayCount > bestDayCount) {
+        bestDayCount = dayCount;
+        bestPlaceResult = result;
+      }
+    }
+  }
+
+  if (bestPlaceResult && bestDayCount >= 4 && bestPlaceResult.openingHours) {
+    return {
+      dates: {
+        kind: 'place',
+        location,
+        openingHours: bestPlaceResult.openingHours,
+      },
+      type: 'place',
+    };
+  }
+
+  const eventInstances = chronoResults
+    .flatMap((result) => result.eventInstances ?? [])
+    .map((instance) => ({
+      ...instance,
+      endTime: instance.endTime ?? instance.startTime,
+      location,
+    }));
+
+  if (eventInstances.length) {
+    return {
+      dates: {
+        kind: 'event',
+        instances: eventInstances,
+      },
+      type: 'event',
+    };
+  }
+
+  return { dates: null, type: null };
 }
 
 export async function getOfficialUrlAndContent(
   inputUrl: string,
   activityName: string,
   userAgents: string[],
+  location: SharedLocation,
 ): Promise<OfficialContentResult> {
   const origin = (() => {
     try {
@@ -666,40 +996,62 @@ export async function getOfficialUrlAndContent(
     set.add(url);
     return true;
   };
+
+  const urlValidityCache = new Map<string, boolean>();
+  async function passesUrlFilters(candidateUrl: string): Promise<boolean> {
+    const preScore = quickPreScoreUrl(candidateUrl);
+    if (preScore < MIN_URL_PRE_SCORE) {
+      logDebug(`[Pre-filter] ${candidateUrl} scored ${preScore} – skipping`, 'scraper');
+      return false;
+    }
+    if (urlValidityCache.has(candidateUrl)) {
+      return urlValidityCache.get(candidateUrl)!;
+    }
+    const isValid = await isUrlValidAndHtml(candidateUrl);
+    urlValidityCache.set(candidateUrl, isValid);
+    if (!isValid) {
+      logDebug(`[Pre-filter] ${candidateUrl} failed HEAD/html`, 'scraper');
+    }
+    return isValid;
+  }
+
+  const normalizedInput = normalizeQueueUrl(inputUrl);
+  const rootUrl = origin ? (origin.endsWith('/') ? origin : `${origin}/`) : null;
+  const normalizedRoot = rootUrl ? normalizeQueueUrl(rootUrl) : null;
+  const guessSeedUrl = normalizedRoot ?? normalizedInput ?? inputUrl;
+
   if (origin) {
     const sitemapUrls = await loadSitemap(origin);
     if (sitemapUrls.length) {
-      console.log(`[${activityName}] Loaded ${sitemapUrls.length} links from sitemap`);
+      logDebug(`[${activityName}] Loaded ${sitemapUrls.length} links from sitemap`, activityName);
     }
     for (const url of sitemapUrls) {
       const normalized = normalizeQueueUrl(url);
       if (normalized) {
+        if (!(await passesUrlFilters(normalized))) {
+          continue;
+        }
         if (!tryAddLink(allPotentialLinks, normalized, true)) {
           break;
         }
       }
     }
   }
-  const normalizedInput = normalizeQueueUrl(inputUrl);
   if (normalizedInput) {
     tryAddLink(allPotentialLinks, normalizedInput, true);
   } else {
     tryAddLink(allPotentialLinks, inputUrl, true);
   }
-  if (origin) {
-    const rootUrl = origin.endsWith('/') ? origin : `${origin}/`;
-    const normalizedRoot = normalizeQueueUrl(rootUrl);
-    if (normalizedRoot) {
-      tryAddLink(allPotentialLinks, normalizedRoot, true);
-    } else {
-      tryAddLink(allPotentialLinks, rootUrl, true);
-    }
+  if (normalizedRoot) {
+    tryAddLink(allPotentialLinks, normalizedRoot, true);
+  } else if (rootUrl) {
+    tryAddLink(allPotentialLinks, rootUrl, true);
   }
   const queue: Array<{ url: string; depth: number }> = [
     { url: normalizedInput ?? inputUrl, depth: 0 },
   ];
   if (origin) {
-    queue.unshift({ url: normalizeQueueUrl(`${origin}/`) ?? `${origin}/`, depth: 0 });
+    queue.unshift({ url: normalizedRoot ?? rootUrl ?? `${origin}/`, depth: 0 });
   }
   const visited = new Set<string>();
   const scored = new Map<string, { page: PageScrapeResult; score: number }>();
@@ -734,6 +1086,31 @@ export async function getOfficialUrlAndContent(
     allPages.set(candidate.page.url, candidate.page);
   };
 
+  let smartGuessesInjected = false;
+  async function maybeInjectSmartGuesses(
+    page: PageScrapeResult,
+    depth: number,
+    targetQueue: Array<{ url: string; depth: number }>,
+  ) {
+    if (smartGuessesInjected) return;
+    const base = guessSeedUrl ?? page.url;
+    const guesses = generateSmartHoursGuesses(page.text, base);
+    if (!guesses.length) {
+      smartGuessesInjected = true;
+      return;
+    }
+    smartGuessesInjected = true;
+    for (const guess of guesses) {
+      const normalized = normalizeQueueUrl(guess);
+      if (!normalized) continue;
+      if (visited.has(normalized) || allPotentialLinks.has(normalized)) continue;
+      if (!(await passesUrlFilters(normalized))) continue;
+      if (!tryAddLink(allPotentialLinks, normalized, true)) continue;
+      targetQueue.push({ url: normalized, depth: depth + 1 });
+    }
+    targetQueue.sort((a, b) => urlScore(b.url) - urlScore(a.url));
+  }
+
   const crawlQueue = async (seedQueue?: Array<{ url: string; depth: number }>) => {
     const workQueue = seedQueue ?? queue;
     while (workQueue.length && crawled < maxCrawlPages && pagesCrawled < CRAWL_BUDGET_HARD) {
@@ -745,6 +1122,7 @@ export async function getOfficialUrlAndContent(
       crawled += 1;
       pagesCrawled += 1;
       addCandidate(candidate);
+      await maybeInjectSmartGuesses(candidate.page, depth, workQueue);
       if (candidate.semanticHoursLinks?.length) {
         const goldenUrls = new Set<string>();
 
@@ -759,8 +1137,14 @@ export async function getOfficialUrlAndContent(
         }
 
         if (goldenUrls.size > 0) {
-          console.log(`[GOLDEN] Injecting ${goldenUrls.size} unvisited hours pages into crawl queue NOW`);
+          logDebug(
+            `[GOLDEN] Injecting ${goldenUrls.size} unvisited hours pages into crawl queue NOW`,
+            'scraper',
+          );
           for (const u of goldenUrls) {
+            if (visited.has(u) || allPotentialLinks.has(u)) continue;
+            if (!(await passesUrlFilters(u))) continue;
+            if (!tryAddLink(allPotentialLinks, u, true)) continue;
             queue.unshift({ url: u, depth: 0 });
           }
         }
@@ -777,9 +1161,9 @@ export async function getOfficialUrlAndContent(
           const resolved = new URL(link, url);
           if (origin && resolved.origin !== origin) continue;
           const normalized = normalizeQueueUrl(resolved.toString());
-          if (!normalized) continue;
+          if (!normalized || visited.has(normalized) || allPotentialLinks.has(normalized)) continue;
+          if (!(await passesUrlFilters(normalized))) continue;
           if (!tryAddLink(allPotentialLinks, normalized, true)) continue;
-          if (visited.has(normalized)) continue;
           const pathLower = new URL(normalized).pathname.toLowerCase();
           const isRelevant = allKeywords.some((kw) => pathLower.includes(kw));
           if (!isRelevant && depth >= 1) continue;
@@ -817,49 +1201,6 @@ export async function getOfficialUrlAndContent(
           candidates.add(normalizedLink);
         }
       }
-      if (sanitizedOrigin) {
-        for (const suffix of COMMON_ORIGIN_PATHS) {
-          const target = `${sanitizedOrigin}${suffix}`;
-          const normalizedTarget = normalizeQueueUrl(target);
-          if (!normalizedTarget) continue;
-          if (getBudgetState(true) === 'hard') return;
-          candidates.add(normalizedTarget);
-          if (!tryAddLink(potentialLinks, normalizedTarget, true)) {
-            if (pagesCrawled >= CRAWL_BUDGET_HARD) return;
-          }
-        }
-        if (task.id === 'hours') {
-          const PRIORITY_SUFFIXES = ['opening-hours', 'opening-times', 'hours', 'times', 'schedule'];
-          const PREFIXES = [
-            'plan-your-visit/',
-            'visit-us/',
-            'visitor-information/',
-            'before-you-visit/',
-            'info/',
-            'practical-information/',
-          ];
-          const combos = new Set<string>();
-          for (const prefix of PREFIXES) {
-            for (const suffix of PRIORITY_SUFFIXES) {
-              const path1 = `${prefix}${suffix}/`;
-              const path2 = `${prefix}before-you-visit/${suffix}/`;
-              combos.add(`${sanitizedOrigin}${path1}`);
-              combos.add(`${sanitizedOrigin}${path2}`);
-            }
-          }
-          const finalList = Array.from(combos);
-          console.log(`[Task hours] Smart combos generated: ${finalList.length}`);
-          for (const url of finalList.slice(0, 25)) {
-            if (getBudgetState(true) === 'hard') return;
-            const normalized = normalizeQueueUrl(url);
-            if (!normalized) continue;
-            candidates.add(normalized);
-            if (!tryAddLink(potentialLinks, normalized, true)) {
-              if (pagesCrawled >= CRAWL_BUDGET_HARD) return;
-            }
-          }
-        }
-      }
       const scored = Array.from(candidates)
         .filter((link) => link && !visitedLinks.has(link))
         .map((link) => {
@@ -870,15 +1211,17 @@ export async function getOfficialUrlAndContent(
         .sort((a, b) => b.score - a.score)
         .slice(0, 8);
       if (!scored.length) continue;
-      console.log(
+      logDebug(
         `[${name}] Task-specific crawl (${task.id}) driving ${scored.length} URLs: ${scored
           .map((item) => item.url)
           .join(', ')}`,
+        name,
       );
       const hoursTaskDef = CRAWL_TASKS.find((t) => t.id === 'hours');
       for (const candidate of scored) {
         if (crawled >= MAX_CRAWL_PAGES_FALLBACK) break;
         if (visitedLinks.has(candidate.url)) continue;
+        if (!(await passesUrlFilters(candidate.url))) continue;
         if (!canAddNewUrl(true)) {
           if (pagesCrawled >= CRAWL_BUDGET_HARD) return;
           continue;
@@ -894,7 +1237,7 @@ export async function getOfficialUrlAndContent(
             !miniCrawledTasks.has(task.id) &&
             extractOpeningHours([extra.page]).source === 'none'
           ) {
-            console.log(`[Recursive] No hours in ${candidate.url}; mini-crawling its links`);
+            logDebug(`[Recursive] No hours in ${candidate.url}; mini-crawling its links`, 'scraper');
             const miniQueue: { url: string; depth: number; score: number }[] = [];
             const seen = new Set<string>();
             for (const link of extra.links ?? []) {
@@ -906,8 +1249,14 @@ export async function getOfficialUrlAndContent(
                 const resolvedRaw = new URL(link, candidate.url).toString();
                 const resolved = normalizeQueueUrl(resolvedRaw);
                 if (!resolved) continue;
-                if (visitedLinks.has(resolved) || seen.has(resolved)) continue;
+                if (
+                  visitedLinks.has(resolved) ||
+                  seen.has(resolved) ||
+                  allPotentialLinks.has(resolved)
+                )
+                  continue;
                 seen.add(resolved);
+                if (!(await passesUrlFilters(resolved))) continue;
                 if (!tryAddLink(potentialLinks, resolved, true)) {
                   if (pagesCrawled >= CRAWL_BUDGET_HARD) return;
                 }
@@ -963,10 +1312,11 @@ export async function getOfficialUrlAndContent(
       .slice(0, 2)
       .map((entry) => entry[1].page);
 
-    console.log(
+    logDebug(
       `[${activityName}] Tracks selected: Hours (${hoursCandidates.map((p) => p.url).join(', ')}) | General (${generalCandidates
         .map((p) => p.url)
         .join(', ')})`,
+      activityName,
     );
 
     return [...hoursCandidates, ...generalCandidates];
@@ -982,7 +1332,10 @@ export async function getOfficialUrlAndContent(
 
   const hoursResult = extractOpeningHours(sorted);
   if (hoursResult.source === 'none') {
-    console.log(`[${activityName}] No opening hours found in top pages – launching targeted hours crawl`);
+    logDebug(
+      `[${activityName}] No opening hours found in top pages – launching targeted hours crawl`,
+      activityName,
+    );
     const hoursCandidates = Array.from(allPotentialLinks)
       .filter((link) => !visited.has(link))
       .sort((a, b) => urlScore(b) - urlScore(a))
@@ -991,6 +1344,7 @@ export async function getOfficialUrlAndContent(
     for (const url of hoursCandidates) {
       if (crawled >= MAX_CRAWL_PAGES_FALLBACK) break;
       if (!canAddNewUrl(true)) break;
+      if (!(await passesUrlFilters(url))) continue;
       const extra = await scrapeSinglePage(url, userAgents);
       if (extra) {
         addCandidate(extra);
@@ -1005,11 +1359,11 @@ export async function getOfficialUrlAndContent(
   sorted = buildSortedResults();
   let extraction = extractOpeningHours(sorted);
   if (extraction.source === 'none') {
-    console.log(`[Efficiency] Hours still missing – running hours-only task crawls`);
+    logDebug('[Efficiency] Hours still missing – running hours-only task crawls', activityName);
     const hoursTask = CRAWL_TASKS.filter((task) => task.id === 'hours');
     await runTaskSpecificCrawls(origin, allPotentialLinks, visited, userAgents, activityName, hoursTask);
   } else {
-    console.log('[Efficiency] Hours found early; skipping hours-only task crawls');
+    logDebug('[Efficiency] Hours found early; skipping hours-only task crawls', activityName);
   }
   sorted = buildSortedResults();
   extraction = extractOpeningHours(sorted);
@@ -1021,15 +1375,16 @@ export async function getOfficialUrlAndContent(
       !page.structured.description,
   );
   if (extraction.source === 'none' || otherDataMissing) {
-    console.log(
+    logDebug(
       `[Efficiency] Additional data missing (hoursMissing=${
         extraction.source === 'none'
       }, otherMissing=${otherDataMissing}) – running remaining task crawls`,
+      activityName,
     );
     const remainingTasks = CRAWL_TASKS.filter((task) => task.id !== 'hours');
     await runTaskSpecificCrawls(origin, allPotentialLinks, visited, userAgents, activityName, remainingTasks);
   } else {
-    console.log('[Efficiency] Other data looks complete; skipping remaining task-specific crawls');
+    logDebug('[Efficiency] Other data looks complete; skipping remaining task-specific crawls', activityName);
   }
   sorted = buildSortedResults();
 
@@ -1037,38 +1392,268 @@ export async function getOfficialUrlAndContent(
     .map(([url, entry]) => ({ url, score: entry.score }))
     .sort((a, b) => b.score - a.score);
 
-  const timeScored = Array.from(allPages.entries())
-    .map(([url, page]) => ({ url, page, score: scoreUrlForTimeInfo(page) }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 3);
+  const hoursScoreAll = Array.from(allPages.entries()).map(([url, page]) => ({
+    url,
+    page,
+    score: scoreUrlForTimeInfo(page),
+  }));
+  const hoursScoreSorted = [...hoursScoreAll].sort((a, b) => b.score - a.score);
 
-  let hoursRep: PageScrapeResult | null = null;
-  for (const candidate of timeScored) {
-    if (hasActualTimeInfo(candidate.page)) {
-      hoursRep = candidate.page;
-      console.log(`[HOURS TRACK] Selected ${candidate.url} as time-info rep (score: ${candidate.score})`);
+  const candidateList: Array<{ url: string; page: PageScrapeResult; score: number }> = [];
+  const seenCandidates = new Set<string>();
+  for (const candidate of hoursScoreSorted) {
+    if (seenCandidates.has(candidate.url)) continue;
+    seenCandidates.add(candidate.url);
+    candidateList.push(candidate);
+    if (candidateList.length >= 3) break;
+  }
+
+  const scoreMap = new Map<string, number>();
+  for (const { url, score } of hoursScoreAll) {
+    const existing = scoreMap.get(url);
+    scoreMap.set(url, existing !== undefined ? Math.max(existing, score) : score);
+  }
+  const scores = Array.from(scoreMap.entries())
+    .map(([url, score]) => ({ url, score }))
+    .sort((a, b) => b.score - a.score);
+
+  let dateTimePage: PageScrapeResult | null = null;
+  let winningClassification: { dates: Dates | null; type: 'place' | 'event' | null } = {
+    dates: null,
+    type: null,
+  };
+  let finalDeepScrapeUrl: string | null = null;
+
+  for (const candidate of candidateList) {
+    const pageResult = candidate.page;
+    const calendarResult = extractCalendarExceptionsFromText(pageResult.text);
+    if (
+      calendarResult.exceptions.length >= 5 &&
+      calendarResult.openingHours &&
+      Object.keys(calendarResult.openingHours).length >= 4
+    ) {
+      const placeDates: PlaceDates = {
+        kind: 'place',
+        location,
+        openingHours: calendarResult.openingHours,
+        exceptions: calendarResult.exceptions,
+      };
+      dateTimePage = pageResult;
+      winningClassification = { dates: placeDates, type: 'place' };
       break;
     }
-    console.log(`[HOURS TRACK] Rejected ${candidate.url} - no strict time info`);
-  }
-
-  if (!hoursRep && timeScored.length > 0) {
-    hoursRep = timeScored[0].page;
-    console.log(
-      `[HOURS TRACK] Fallback (no strict match) → using highest-scored page: ${timeScored[0].url} (score: ${timeScored[0].score})`,
-    );
-  }
-
-  if (!hoursRep) {
-    console.log(`[HOURS TRACK] No valid time-info page found - excluding activity`);
-    return { pages: [], scoredUrls };
+    let instances = extractRawDateTimeInstancesFromPage(pageResult, undefined, {
+      jsonLdHours: pageResult.structured.jsonLdHours,
+    });
+    let classification = parseAndClassifyDates(instances, location);
+    if (!classification.dates && hasActualTimeInfo(pageResult)) {
+      const format = classifyDateTimeFormat(pageResult);
+      if (format === 'js-dynamic') {
+        try {
+          const deepInstances = await deepScrapeDynamicDateTime(pageResult.url, userAgents);
+          if (deepInstances.length) {
+            pageResult.deepDateTimeData = deepInstances;
+            finalDeepScrapeUrl = pageResult.url;
+            classification = parseAndClassifyDates(deepInstances, location);
+            instances = deepInstances;
+          }
+        } catch (error) {
+          logDebug(
+            `[${activityName}] Deep date/time scrape failed for ${pageResult.url}: ${(error as Error).message}`,
+            activityName,
+          );
+        }
+      }
+    }
+    if (classification.dates) {
+      dateTimePage = pageResult;
+      winningClassification = classification;
+      break;
+    }
   }
 
   const generalCandidates = buildSortedResults();
-  const filteredGeneral = generalCandidates.filter((page) => page.url !== hoursRep?.url).slice(0, 2);
-  const finalPages = [hoursRep, ...filteredGeneral];
+  const generalPages = generalCandidates
+    .filter((page) => !dateTimePage || page.url !== dateTimePage.url)
+    .slice(0, 2);
+  const finalPages = [...(dateTimePage ? [dateTimePage] : []), ...generalPages];
+  const allScrapedPages = Array.from(allPages.values());
 
-  return { pages: finalPages, scoredUrls };
+  return {
+    pages: finalPages,
+    scoredUrls,
+    scores,
+    dateTimePage,
+    generalPages,
+    allScrapedPages,
+    preExtractedDates: winningClassification.dates,
+    preClassifiedType: winningClassification.type,
+    deepScrapeUrl: finalDeepScrapeUrl,
+  };
+}
+
+const CALENDAR_NEXT_SELECTORS = [
+  'button[aria-label*="next month"]',
+  'button[aria-label*="Next month"]',
+  'button[aria-label*="next"]',
+  'button:has-text("Next")',
+  'button:has-text("›")',
+  '.fc-next-button',
+  '.rc-arrow-next',
+  '.calendar-nav .next',
+  '.next-month',
+  '.month-nav-next',
+  '.calendar-next',
+  '.arrow-right',
+  '[data-action="next"]',
+];
+
+const API_CALENDAR_PATTERN = /\/api\/calendar/i;
+
+function extractMonthKeyFromHtml(html: string): string | null {
+  const match = html.match(/(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}/i);
+  return match ? match[0].toLowerCase() : null;
+}
+
+async function clickNextCalendar(page: Page): Promise<boolean> {
+  for (const selector of CALENDAR_NEXT_SELECTORS) {
+    const element = await page.$(selector);
+    if (element) {
+      await element.click().catch(() => null);
+      return true;
+    }
+  }
+  await page
+    .evaluate(() => {
+      const nextBtn =
+        document.querySelector('.fc-next-button') || document.querySelector('[data-next-month]');
+      if (nextBtn) {
+        (nextBtn as HTMLElement).click();
+      }
+    })
+    .catch(() => null);
+  return false;
+}
+
+async function deepScrapeDynamicDateTime(url: string, userAgents: string[]): Promise<RawDateTimeInstance[]> {
+  return retryOperation(async () => {
+    let browser: Browser | null = null;
+    try {
+      const launchedBrowser = await chromium.launch(getLaunchOptions());
+      browser = launchedBrowser;
+      const context = await launchedBrowser.newContext({
+        viewport: getRandomViewport(),
+        userAgent: getRandomUserAgent(userAgents),
+      });
+      const page = await context.newPage();
+      await page.route('**/*', (route: PlaywrightRoute) => {
+        const rt = route.request().resourceType();
+        if (['image', 'stylesheet', 'font', 'media'].includes(rt)) {
+          return route.abort();
+        }
+        return route.continue();
+      });
+      const response = await page.goto(url, {
+        waitUntil: 'domcontentloaded',
+        timeout: SCRAPE_TIMEOUT_MS,
+      });
+      if (response) {
+        await response.finished().catch(() => null);
+      }
+      await page.waitForLoadState('networkidle', { timeout: SCRAPE_TIMEOUT_MS }).catch(() => null);
+      await page.waitForTimeout(900);
+
+      const structuredTemplate = {
+        description: '',
+        priceText: '',
+        ageText: '',
+        openingHoursText: '',
+        addressText: '',
+        extractedHours: '',
+        extractedAge: '',
+        extractedPrice: '',
+        extractedDescription: '',
+        jsonLdHours: undefined,
+      };
+
+      const aggregated = new Map<string, RawDateTimeInstance>();
+      const recordInstance = (instance: RawDateTimeInstance) => {
+        const key = `${instance.date}|${instance.startTime ?? ''}|${instance.endTime ?? ''}|${instance.note ?? ''}`;
+        if (!aggregated.has(key)) {
+          aggregated.set(key, instance);
+        }
+      };
+      page.on('response', async (response: Response) => {
+        const url = response.url();
+        if (!API_CALENDAR_PATTERN.test(url)) return;
+        const type = response.headers()['content-type'] ?? '';
+        if (!type.includes('json')) return;
+        try {
+          const payload = await response.json();
+          const parsed = normalizeCalendarApiPayload(payload);
+          parsed.forEach(recordInstance);
+        } catch {
+          // ignore API parse failures
+        }
+      });
+
+      const captureSnapshot = async () => {
+        const snapshotText = await page.evaluate(() => document.body?.innerText ?? '');
+        const snapshotHtml = await page.content();
+        const stubPage: PageScrapeResult = {
+          url,
+          title: (await page.title()) || '',
+          text: snapshotText,
+          html: snapshotHtml,
+          structured: { ...structuredTemplate },
+        };
+        const instances = extractRawDateTimeInstancesFromPage(stubPage);
+        instances.forEach(recordInstance);
+      };
+
+      await captureSnapshot();
+
+      const monthsSeen = new Set<string>();
+      const initialMonth = extractMonthKeyFromHtml(await page.content());
+      if (initialMonth) {
+        monthsSeen.add(initialMonth);
+        logDebug(`Captured month: ${initialMonth}, total unique months: ${monthsSeen.size}`, url);
+      }
+
+      const MIN_INTERACTIONS = 10;
+      const TARGET_MONTHS = 3;
+      const MAX_MONTHS = 12;
+      const MAX_INTERACTIONS = 30;
+      let interactions = 0;
+
+      while (
+        interactions < MAX_INTERACTIONS &&
+        (interactions < MIN_INTERACTIONS || monthsSeen.size < TARGET_MONTHS) &&
+        monthsSeen.size < MAX_MONTHS
+      ) {
+        const moved = await clickNextCalendar(page);
+        interactions += 1;
+        if (!moved) {
+          await page.keyboard.press('PageDown').catch(() => null);
+          await page.waitForTimeout(600);
+          continue;
+        }
+        await page.waitForTimeout(1200);
+        await captureSnapshot();
+        const nextMonth = extractMonthKeyFromHtml(await page.content());
+        if (nextMonth) {
+          monthsSeen.add(nextMonth);
+          logDebug(`Captured month: ${nextMonth}, total unique months: ${monthsSeen.size}`, url);
+        }
+      }
+
+      return Array.from(aggregated.values());
+    } finally {
+      if (browser) {
+        await browser.close();
+      }
+    }
+  }, 'deep dynamic date/time scrape', 3);
 }
 
 async function retryOperation<T>(fn: () => Promise<T>, label: string, maxRetries = 5, delay = 2_000): Promise<T> {
@@ -1080,9 +1665,9 @@ async function retryOperation<T>(fn: () => Promise<T>, label: string, maxRetries
     } catch (error) {
       attempt += 1;
       const message = (error as Error).message;
-      console.warn(`[retry] ${label} attempt ${attempt} failed: ${message}`);
+      logDebug(`[retry] ${label} attempt ${attempt} failed: ${message}`, 'retry');
       if (/net::ERR_HTTP2_PROTOCOL_ERROR/.test(message)) {
-        console.warn('[retry] Detected HTTP2 protocol error; retrying.');
+        logDebug('[retry] Detected HTTP2 protocol error; retrying.', 'retry');
       }
       if (attempt >= maxRetries) {
         throw error;
