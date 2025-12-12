@@ -3,7 +3,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { mapAddressToAreas, activitySchema } from './schema-loader.js';
 import { resolveOfficialUrl } from './url-resolver.js';
-import { getOfficialUrlAndContent } from './scraper.js';
+import { getOfficialUrlAndContent, type OfficialContentResult } from './scraper.js';
 import { fetchLLMDataWithRetries, ActivityLLMOutput } from './llm.js';
 import {
   resolveCoordinates,
@@ -26,6 +26,7 @@ import type {
   EventDates,
   Location as SharedLocation,
   PlaceDates,
+  PriceLevel,
 } from '../../london-kids-p1/packages/shared/src/activity.js';
 
 const SCRAPE_LOG_DIR = path.resolve(process.cwd(), 'scrape-logs');
@@ -124,6 +125,151 @@ function dedupeEvents(events: SourceEvent[]): SourceEvent[] {
     }
   }
   return Array.from(eventsById.values());
+}
+
+const PRICE_REGEX = /£\s*([\d,]+(?:\.\d{1,2})?)/gi;
+
+function normalizeCurrencyValue(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const numeric = value.replace(/[^0-9.]/g, '');
+    const parsed = Number(numeric);
+    if (!Number.isNaN(parsed)) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
+function parsePricesFromText(text?: string): number[] {
+  if (!text) return [];
+  const sanitized = text.replace(/\u00A0/g, ' ');
+  const matches: number[] = [];
+  for (const match of sanitized.matchAll(PRICE_REGEX)) {
+    const raw = match[1]?.replace(/,/g, '') ?? '';
+    const parsed = Number(raw);
+    if (!Number.isNaN(parsed)) {
+      matches.push(parsed);
+    }
+  }
+  return matches;
+}
+
+function findEventPrice(event: SourceEvent): { value: number | null; source: string | null } {
+  let lowest: number | null = null;
+  let source: string | null = null;
+  const consider = (candidate: number | null, note: string) => {
+    if (candidate === null || Number.isNaN(candidate)) return;
+    if (candidate < 0) return;
+    if (lowest === null || candidate < lowest) {
+      lowest = candidate;
+      source = note;
+    }
+  };
+
+  for (const schedule of event.schedules ?? []) {
+    for (const ticket of schedule.tickets ?? []) {
+      consider(normalizeCurrencyValue(ticket.min_price ?? ticket.max_price), 'datathistle schedule ticket');
+    }
+    for (const performance of schedule.performances ?? []) {
+      for (const ticket of performance.tickets ?? []) {
+        consider(normalizeCurrencyValue(ticket.min_price ?? ticket.max_price), 'datathistle performance ticket');
+      }
+    }
+  }
+
+  const descriptionTexts: string[] = [];
+  if (Array.isArray(event.descriptions)) {
+    for (const entry of event.descriptions) {
+      if (entry?.description) {
+        descriptionTexts.push(entry.description);
+      }
+    }
+  }
+  const candidateDescription = (event as unknown as Record<string, unknown>).description;
+  if (typeof candidateDescription === 'string') {
+    descriptionTexts.push(candidateDescription);
+  }
+  for (const description of descriptionTexts) {
+    const matches = parsePricesFromText(description);
+    if (matches.length) {
+      consider(Math.min(...matches), 'datathistle description text');
+    }
+  }
+
+  return { value: lowest, source };
+}
+
+function findPriceFromScrapedPages(pages: PageScrapeResult[]): { value: number | null; source: string | null } {
+  for (const page of pages) {
+    const fields: Array<{ value?: string; label: string }> = [
+      { value: page.structured.extractedPrice, label: 'structured.extractedPrice' },
+      { value: page.structured.priceText, label: 'structured.priceText' },
+    ];
+    for (const field of fields) {
+      if (field.value) {
+        const matches = parsePricesFromText(field.value);
+        if (matches.length) {
+          return { value: Math.min(...matches), source: `${field.label} on ${page.url}` };
+        }
+      }
+    }
+    const textMatches = parsePricesFromText(page.text);
+    if (textMatches.length) {
+      return { value: Math.min(...textMatches), source: `page text on ${page.url}` };
+    }
+  }
+  return { value: null, source: null };
+}
+
+function mapPriceToLevel(price: number | null): PriceLevel {
+  if (price === null) return '££';
+  if (price <= 0) return 'free';
+  if (price < 20) return '£';
+  if (price < 50) return '££';
+  return '£££';
+}
+
+function determinePriceLevel(event: SourceEvent, pages: PageScrapeResult[]): {
+  level: PriceLevel;
+  value: number | null;
+  source: string;
+} {
+  const rawCandidate = findEventPrice(event);
+  if (rawCandidate.value !== null) {
+    return {
+      level: mapPriceToLevel(rawCandidate.value),
+      value: rawCandidate.value,
+      source: rawCandidate.source ?? 'datathistle source data',
+    };
+  }
+  const scrapedCandidate = findPriceFromScrapedPages(pages);
+  if (scrapedCandidate.value !== null) {
+    return {
+      level: mapPriceToLevel(scrapedCandidate.value),
+      value: scrapedCandidate.value,
+      source: scrapedCandidate.source ?? 'scraped page text',
+    };
+  }
+  return { level: '££', value: null, source: 'fallback default' };
+}
+
+function choosePrimaryDateUrl(result: OfficialContentResult, officialUrl: string): { url: string; source: string } {
+  const structuredPage = result.dateTimePage;
+  const hasJsonHours = Boolean(structuredPage?.structured.jsonLdHours);
+  const hasJsonEvents = Boolean(structuredPage?.structured.jsonLdEvents?.length);
+  if (structuredPage && (hasJsonHours || hasJsonEvents)) {
+    return { url: structuredPage.url, source: 'structured date/time page' };
+  }
+  if (result.deepScrapeUrl) {
+    return { url: result.deepScrapeUrl, source: 'deep scrape' };
+  }
+  if (structuredPage) {
+    return { url: structuredPage.url, source: 'primary date/time page' };
+  }
+  return { url: officialUrl, source: 'official URL fallback' };
 }
 
 function toMinutes(time: string): number {
@@ -529,6 +675,12 @@ export async function processEvents(events: SourceEvent[], groqApiKey: string) {
     setTaskStatus(statuses, 4, 'success', 'Groq response valid');
     logDebug('Step 5: received LLM response', event.event_id);
 
+    const primaryDateInfo = choosePrimaryDateUrl(result, officialUrl);
+    logDebug(
+      `Primary date/time source resolved to ${primaryDateInfo.source} (${primaryDateInfo.url})`,
+      event.event_id,
+    );
+
     try {
       const canonicalDates: Dates =
         result.preClassifiedType === 'place'
@@ -548,6 +700,8 @@ export async function processEvents(events: SourceEvent[], groqApiKey: string) {
         scrapedOfficialUrl,
         canonicalDates,
         result.preClassifiedType,
+        primaryDateInfo.url,
+        primaryDateInfo.source,
       );
       if (!activity) {
         setTaskStatus(statuses, 5, 'fail', 'no valid dates');
@@ -582,35 +736,40 @@ async function buildActivity(
   scrapedOfficialUrl: string | null,
   dates: Dates,
   preClassifiedType: 'place' | 'event',
+  primaryDateUrl: string,
+  primaryDateSource: string,
 ): Promise<Activity | null> {
   const imageUrl = event.images?.[0]?.url;
 
-  let bestUrl = scrapedOfficialUrl || officialUrl;
-  if (scrapedPages.length > 0) {
-    const bestPage = scrapedPages.reduce((prev, curr) => (curr.url.length > prev.url.length ? curr : prev));
-    if (bestPage.url.length > bestUrl.length + 10) {
-      bestUrl = bestPage.url;
-    }
-  }
+  const finalUrl = primaryDateUrl || scrapedOfficialUrl || officialUrl;
+  const priceInfo = determinePriceLevel(event, scrapedPages);
 
   const typeSuffix = preClassifiedType;
   const baseActivity = {
     id: `${event.event_id}--${typeSuffix}`,
     name: event.name,
     summary: llmData.summary,
-    priceLevel: '££' as const,
+    priceLevel: '££' as PriceLevel,
     age: {
       officialAgeAvailable: llmData.officialAgeAvailable,
       minAge: llmData.minAge,
       maxAge: llmData.maxAge,
     },
-    url: bestUrl,
+    url: finalUrl,
     source: 'datathistle',
     lastUpdate: new Date().toISOString(),
     keywords: llmData.keywords,
     labels: llmData.labels,
     imageUrl,
   };
+
+  baseActivity.priceLevel = priceInfo.level;
+  baseActivity.url = finalUrl;
+  logDebug(
+    `[PRICE] level=${priceInfo.level} value=${priceInfo.value ?? 'n/a'} source=${priceInfo.source}`,
+    event.event_id,
+  );
+  logDebug(`[URL] resolved to ${finalUrl} (${primaryDateSource})`, event.event_id);
 
   if (preClassifiedType === 'place') {
     const placeDates = dates as PlaceDates;

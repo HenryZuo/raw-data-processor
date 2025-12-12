@@ -65,6 +65,7 @@ export interface SourceSchedule {
   place?: SourcePlace;
   performances?: SourcePerformance[];
   links?: SourceLink[];
+  tickets?: SourceTicket[];
 }
 
 export interface SourceEvent {
