@@ -1,0 +1,55 @@
+{
+  "eventId": "2b9a077a-a171-983c-f121-67360019727e",
+  "eventName": "A Christmas Carol",
+  "pageScores": [
+    {
+      "url": "https://www.oldvictheatre.com/",
+      "score": 640
+    }
+  ],
+  "scores": [
+    {
+      "url": "https://www.oldvictheatre.com/",
+      "score": 110
+    }
+  ],
+  "deepScrapeUrl": null,
+  "officialUrlResolution": {
+    "summary": "Light-scraped URLs used before selecting the final official URL.",
+    "finalOfficialUrl": "https://www.oldvictheatre.com/stage/a-christmas-carol-2024/",
+    "lightScrapedCandidates": [
+      {
+        "label": "Light-scraped candidate 1 (Step 3 scoring)",
+        "url": "https://www.oldvictheatre.com/stage/a-christmas-carol-2024/",
+        "score": 1901
+      },
+      {
+        "label": "Light-scraped candidate 2 (Step 3 scoring)",
+        "url": "https://www.grandtheatre.com/grand-theatre-celebrates-holidays-christmas-carol",
+        "score": 1507
+      },
+      {
+        "label": "Light-scraped candidate 3 (Step 3 scoring)",
+        "url": "https://www.atgtickets.com/shows/a-christmas-carol/",
+        "score": 1241
+      },
+      {
+        "label": "Light-scraped candidate 4 (Step 3 scoring)",
+        "url": "https://www.londontheatredirect.com/tickets/christmas-theatre-in-london?srsltid=AfmBOooIq28rybhe7CBN0FN-VZCNpketr8LPZmERtv6a_ayWjsPYnTzZ",
+        "score": 994
+      },
+      {
+        "label": "Light-scraped candidate 5 (Step 3 scoring)",
+        "url": "https://www.londontheatre.co.uk/whats-on",
+        "score": 757
+      },
+      {
+        "label": "Light-scraped candidate 6 (Step 3 scoring)",
+        "url": "https://www.instagram.com/reel/DR9v4ieAj7i/",
+        "score": 711
+      }
+    ],
+    "scoreThreshold": 750
+  },
+  "generatedAt": "2025-12-12T20:09:15.815Z"
+}

@@ -1,36 +1,34 @@
-import { cleanText, normalizeCandidateUrl, isBookingDomain, logDebug } from './utils.js';
-import type { SourceEvent } from './types.js';
-
-const OFFICIAL_SIGNAL_REGEX = /official|book tickets|opening times|visit us|family|kids|age \d|merlin|©/i;
-const AGGREGATOR_REGEX = /ticketmaster|eventbrite|timeout\.com|visitlondoncom|datathistle|seetickets|axs|ticketweb|skiddle/i;
+import { cleanText, normalizeCandidateUrl, isBookingDomain, logDebug, normalizeActivityForHostname, USER_AGENT_STRINGS } from './utils.js';
+import { lightScrapeUrl, scoreForOfficialUrl } from './scraper.js';
+import { OFFICIAL_SIGNAL_REGEX, AGGREGATOR_REGEX, PREFERRED_VENUE_REGEX, SERP_API_BLACKLIST } from './url-constants.js';
+import type { PageScrapeResult, SourceEvent, OfficialUrlResolutionResult } from './types.js';
+import type { Location as SharedLocation } from '../../london-kids-p1/packages/shared/src/activity.js';
 
 const SERP_API_URL = 'https://serpapi.com/search.json';
-const SERP_API_BLACKLIST = [
-  'ticketmaster',
-  'eventbrite',
-  'seetickets',
-  'timeout',
-  'datathistle',
-  'axs',
-  'ticketweb',
-  'dayoutwiththekids.co.uk',
-  'visitlondon.com',
-  'tripadvisor',
-  'wikipedia',
-  'youtube',
-  'facebook',
-  'yelp',
+const OFFICIAL_URL_CACHE = new Map<string, OfficialUrlResolutionResult>();
+const SERP_CANDIDATE_LIMIT = 20;
+export const OFFICIAL_URL_SCORE_THRESHOLD = 750;
+const CINEMA_HOSTNAMES = [
+  'odeon.co.uk',
+  'vue.com',
+  'cineworld.co.uk',
+  'picturehouses.com',
+  'everymancinema.com',
+  'curzon.com',
+  'curzoncinemas.com',
+  'showcasecinemas.co.uk',
+  'reelcinemas.co.uk',
+  'phoenixcinema.co.uk',
+  'riocinema.org.uk',
+  'lexicinema.co.uk',
+  'bfi.org.uk',
+  'barbican.org.uk',
+  'genesis-cinema.co.uk',
+  'riversidestudios.co.uk',
+  'cinema',
+  'filmhouse',
+  'picturehouse',
 ];
-const OFFICIAL_URL_CACHE = new Map<string, string | null>();
-
-export function normalizeActivityForHostname(name: string): string | null {
-  const cleaned = name
-    .toLowerCase()
-    .replace(/[’'‘`]/g, '')
-    .replace(/\blondon\b/g, '')
-    .replace(/[^a-z0-9]+/g, '');
-  return cleaned.length >= 3 ? cleaned : null;
-}
 
 function normalizeToRootUrl(url: string): string {
   try {
@@ -178,7 +176,7 @@ function buildSearchQuery(event: SourceEvent): string {
     .join(' ');
 }
 
-async function fetchSerpLinks(query: string): Promise<string[]> {
+async function fetchSerpLinks(query: string, numResults = SERP_CANDIDATE_LIMIT): Promise<string[]> {
   const apiKey = process.env.SERPAPI_KEY;
   if (!apiKey) {
     logDebug('SERPAPI_KEY missing; skipping SerpAPI search for official URL.', 'url-resolver');
@@ -189,7 +187,7 @@ async function fetchSerpLinks(query: string): Promise<string[]> {
     const params = new URLSearchParams({
       engine: 'google',
       q: query,
-      num: '10',
+      num: String(numResults),
       api_key: apiKey,
     });
     const response = await fetch(`${SERP_API_URL}?${params.toString()}`);
@@ -209,13 +207,13 @@ async function fetchSerpLinks(query: string): Promise<string[]> {
   }
 }
 
-function filterAndLimitSerpLinks(links: string[]): string[] {
+function filterAndLimitSerpLinks(links: string[], limit = SERP_CANDIDATE_LIMIT): string[] {
   const filtered: string[] = [];
   for (const link of links) {
     const lowered = link.toLowerCase();
     if (SERP_API_BLACKLIST.some((term) => lowered.includes(term))) continue;
     filtered.push(link);
-    if (filtered.length === 5) break;
+    if (filtered.length === limit) break;
   }
   return filtered;
 }
@@ -243,63 +241,26 @@ function collectNonBookingCandidateSources(event: SourceEvent): { urls: string[]
   return { urls: Array.from(urls), hosts };
 }
 
-async function evaluateCandidateList(
-  candidates: string[],
+export async function resolveOfficialUrl(
   event: SourceEvent,
-  preferredHosts: Set<string>,
-): Promise<{ url: string; pathLength: number; hostMatch: boolean }[]> {
-  const verified: { url: string; pathLength: number; hostMatch: boolean }[] = [];
-  const seen = new Set<string>();
-  const normalizedActivityHostname = normalizeActivityForHostname(event.name);
-
-  for (const candidate of candidates) {
-    logDebug(`evaluating candidate ${candidate}`, event.event_id);
-    const normalized = normalizeCandidateUrl(candidate);
-    if (!normalized || seen.has(normalized) || isBookingDomain(normalized)) {
-      continue;
-    }
-    seen.add(normalized);
-
-    if (await verifyCandidateUrl(normalized, event)) {
-      let pathLength = normalized.length;
-      try {
-        pathLength = new URL(normalized).pathname.length;
-      } catch {
-        pathLength = normalized.length;
-      }
-      const hostname = (() => {
-        try {
-          return new URL(normalized).hostname.toLowerCase();
-        } catch {
-          return '';
-        }
-      })();
-      const hostnameSlim = hostname.replace(/[^a-z0-9]+/g, '');
-      const hostnameMatch = normalizedActivityHostname
-        ? hostnameSlim.includes(normalizedActivityHostname)
-        : false;
-      const hostMatch = hostname ? preferredHosts.has(hostname) || hostnameMatch : false;
-      verified.push({ url: normalized, pathLength, hostMatch });
-    }
-  }
-
-  verified.sort((a, b) => {
-    if (a.hostMatch !== b.hostMatch) {
-      return b.hostMatch ? 1 : -1;
-    }
-    return a.pathLength - b.pathLength;
-  });
-
-  return verified;
-}
-
-export async function resolveOfficialUrl(event: SourceEvent): Promise<string | null> {
-  if (OFFICIAL_URL_CACHE.has(event.event_id)) {
-    return OFFICIAL_URL_CACHE.get(event.event_id) ?? null;
+  location: SharedLocation,
+): Promise<OfficialUrlResolutionResult> {
+  const cached = OFFICIAL_URL_CACHE.get(event.event_id);
+  if (cached) {
+    return cached;
   }
 
   const eventId = event.event_id;
-  let officialUrl: string | null = null;
+  const lightScrapeCandidates: { url: string; score: number }[] = [];
+
+  const finalize = (finalUrl: string | null): OfficialUrlResolutionResult => {
+    const result: OfficialUrlResolutionResult = {
+      officialUrl: finalUrl,
+      lightScrapeCandidates,
+    };
+    OFFICIAL_URL_CACHE.set(eventId, result);
+    return result;
+  };
 
   const website = event.website?.trim();
   if (website) {
@@ -308,93 +269,114 @@ export async function resolveOfficialUrl(event: SourceEvent): Promise<string | n
       if (isBookingDomain(normalized)) {
         logDebug(`rejected DataThistle website ${normalized} because it points to a booking domain.`, eventId);
       } else {
-        officialUrl = normalizeToRootUrl(normalized);
-        logDebug(`using trusted DataThistle website ${officialUrl}`, eventId);
-        OFFICIAL_URL_CACHE.set(eventId, officialUrl);
-        return officialUrl;
+        const root = normalizeToRootUrl(normalized);
+        logDebug(`using trusted DataThistle website ${root}`, eventId);
+        return finalize(root);
       }
     }
   }
 
-  const { urls: rawUrls, hosts: preferredHosts } = collectNonBookingCandidateSources(event);
-  if (rawUrls.length > 0) {
-    const verifiedRaw = await evaluateCandidateList(rawUrls, event, preferredHosts);
-    if (verifiedRaw.length > 0) {
-      officialUrl = normalizeToRootUrl(verifiedRaw[0].url);
-      logDebug(`selected best candidate from event links: ${officialUrl}`, eventId);
-      OFFICIAL_URL_CACHE.set(eventId, officialUrl);
-      return officialUrl;
+  const { urls: rawUrls, hosts: candidateHosts } = collectNonBookingCandidateSources(event);
+  for (const candidate of rawUrls) {
+    const normalized = normalizeCandidateUrl(candidate);
+    if (!normalized) continue;
+    if (await verifyCandidateUrl(normalized, event)) {
+      const root = normalizeToRootUrl(normalized);
+      logDebug(`selected verified candidate from raw links: ${root}`, eventId);
+      return finalize(root);
     }
   }
 
-  const query = buildSearchQuery(event);
-  let candidates = filterAndLimitSerpLinks(await fetchSerpLinks(query));
-    if (candidates.length < 3) {
-      logDebug(`only ${candidates.length} SERP candidates; retrying with simplified query`, eventId);
-    const fallbackQuery = `${cleanSearchName(event.name)} London official site`;
-    const fallbackLinks = filterAndLimitSerpLinks(await fetchSerpLinks(fallbackQuery));
-    const merged = Array.from(new Set([...candidates, ...fallbackLinks]));
-    candidates = filterAndLimitSerpLinks(merged);
-  }
-
-  const verifiedCandidates = await evaluateCandidateList(candidates, event, preferredHosts);
-
-  // ---- NEW: Skip dispersed film events (e.g. Elf shown at many cinemas) ----
   const hasFilmTag = (event.tags ?? []).some((tag) => /film|movie|cinema|screening/i.test(tag));
-  if (hasFilmTag && verifiedCandidates.length > 0) {
-    const uniqueHosts = new Set(
-      verifiedCandidates
-        .map((c) => {
-          try {
-            return new URL(c.url).hostname.toLowerCase();
-          } catch {
-            return '';
-          }
-        })
-        .filter(Boolean),
+  if (hasFilmTag) {
+    const cinemaHosts = Array.from(candidateHosts).filter(
+      (host) => CINEMA_HOSTNAMES.includes(host) || CINEMA_HOSTNAMES.some((pattern) => host.includes(pattern)),
     );
-    if (uniqueHosts.size > 1) {
-      const CINEMA_HOSTNAMES = [
-        'odeon.co.uk',
-        'vue.com',
-        'cineworld.co.uk',
-        'picturehouses.com',
-        'everymancinema.com',
-        'curzon.com',
-        'curzoncinemas.com',
-        'showcasecinemas.co.uk',
-        'reelcinemas.co.uk',
-        'phoenixcinema.co.uk',
-        'riocinema.org.uk',
-        'lexicinema.co.uk',
-        'bfi.org.uk',
-        'barbican.org.uk',
-        'genesis-cinema.co.uk',
-        'riversidestudios.co.uk',
-        'cinema',
-        'filmhouse',
-        'picturehouse',
-      ];
-      const cinemaHosts = Array.from(uniqueHosts).filter(
-        (host) => CINEMA_HOSTNAMES.includes(host) || CINEMA_HOSTNAMES.some((p) => host.includes(p)),
+    if (cinemaHosts.length >= 2) {
+      logDebug(
+        `SKIPPING dispersed film – multiple cinema venues: ${cinemaHosts.join(', ')}`,
+        event.event_id,
       );
-      if (cinemaHosts.length >= 2) {
-        logDebug(
-          `SKIPPING dispersed film – multiple cinema venues: ${cinemaHosts.join(', ')}`,
-          event.event_id,
-        );
-        OFFICIAL_URL_CACHE.set(eventId, null);
-        return null;
-      }
+      return finalize(null);
     }
   }
-  // ---- END NEW BLOCK ----
 
-  if (verifiedCandidates.length > 0) {
-    officialUrl = normalizeToRootUrl(verifiedCandidates[0].url);
-        logDebug(`Selected best URL: ${officialUrl}`, eventId);
+  const tagLookup = new Set((event.tags ?? []).map((tag) => tag.toLowerCase()));
+  let serpQuery = `${buildSearchQuery(event)} official website`;
+  if (tagLookup.has('theatre') || tagLookup.has('show')) {
+    serpQuery += ' venue official site';
   }
 
-  OFFICIAL_URL_CACHE.set(eventId, officialUrl);
-  return officialUrl;
+  let candidates = filterAndLimitSerpLinks(
+    await fetchSerpLinks(serpQuery, SERP_CANDIDATE_LIMIT),
+    SERP_CANDIDATE_LIMIT,
+  );
+  if (candidates.length < 3) {
+    logDebug(`only ${candidates.length} SERP candidates; retrying with simplified query`, eventId);
+    const fallbackQuery = `${cleanSearchName(event.name)} London official site`;
+    const fallbackLinks = filterAndLimitSerpLinks(
+      await fetchSerpLinks(fallbackQuery, SERP_CANDIDATE_LIMIT),
+      SERP_CANDIDATE_LIMIT,
+    );
+    const merged = Array.from(new Set([...candidates, ...fallbackLinks]));
+    candidates = filterAndLimitSerpLinks(merged, SERP_CANDIDATE_LIMIT);
+  }
+
+  if (!candidates.length) {
+    logDebug('no SERP candidates to evaluate', eventId);
+    return finalize(null);
+  }
+
+  const scrubbed = await Promise.allSettled(candidates.map((url) => lightScrapeUrl(url)));
+  const seen = new Set<string>();
+  const lightPages: Array<PageScrapeResult> = [];
+  for (const result of scrubbed) {
+    if (result.status !== 'fulfilled' || !result.value) continue;
+    const normalized = normalizeCandidateUrl(result.value.url);
+    if (!normalized || isBookingDomain(normalized)) continue;
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    lightPages.push({ ...result.value, url: normalized });
+  }
+
+  if (!lightPages.length) {
+    logDebug('light scrape did not yield any candidates', eventId);
+    return finalize(null);
+  }
+
+  const scoredLight = lightPages
+    .map((page) => {
+      let score = scoreForOfficialUrl(page, event);
+      if (PREFERRED_VENUE_REGEX.test(page.url)) {
+        score += 400;
+      }
+      return { page, score };
+    })
+    .filter((entry) => Number.isFinite(entry.score))
+    .sort((a, b) => b.score - a.score);
+  lightScrapeCandidates.push(
+    ...scoredLight.map((entry) => ({ url: entry.page.url, score: entry.score })),
+  );
+  if (!scoredLight.length) {
+    logDebug('no light-scraped pages scored for official signals', eventId);
+    return finalize(null);
+  }
+
+  const topCandidate = scoredLight[0];
+  if (!topCandidate) {
+    logDebug('no viable light-scraped candidates after scoring', eventId);
+    return finalize(null);
+  }
+
+  if (topCandidate.score > OFFICIAL_URL_SCORE_THRESHOLD) {
+    const finalUrl = topCandidate.page.url;
+    logDebug(`Selected ${finalUrl} with light score ${topCandidate.score}`, eventId);
+    return finalize(finalUrl);
+  }
+
+  logDebug(
+    `Highest light scrape score ${topCandidate.score} was below threshold ${OFFICIAL_URL_SCORE_THRESHOLD}`,
+    eventId,
+  );
+  return finalize(null);
 }

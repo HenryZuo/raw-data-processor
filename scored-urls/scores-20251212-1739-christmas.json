@@ -1,0 +1,87 @@
+{
+  "eventId": "e29e825d-1051-0bc0-1661-c296002bdaa1",
+  "eventName": "Christmas Eve Feast at Smiths Bar & Grill",
+  "pageScores": [
+    {
+      "url": "https://www.smithsbarandgrill.co.uk/faqs",
+      "score": 210
+    },
+    {
+      "url": "https://www.smithsbarandgrill.co.uk/",
+      "score": -40
+    }
+  ],
+  "scores": [
+    {
+      "url": "https://www.smithsbarandgrill.co.uk/faqs",
+      "score": 762.5
+    },
+    {
+      "url": "https://www.smithsbarandgrill.co.uk/",
+      "score": 687.5
+    }
+  ],
+  "deepScrapeUrl": null,
+  "officialUrlResolution": {
+    "summary": "Light-scraped URLs and deep-scrape attempts used before selecting the final official URL.",
+    "finalOfficialUrl": "https://www.smithsbarandgrill.co.uk/",
+    "bestDeepUrl": "https://www.smithsbarandgrill.co.uk/visit",
+    "bestDeepScore": 1347,
+    "lightScrapedCandidates": [
+      {
+        "label": "Light-scraped candidate 1 (Step 3 scoring)",
+        "url": "https://www.smithsbarandgrill.co.uk/hidden-gems/festiveseason",
+        "score": 1344
+      },
+      {
+        "label": "Light-scraped candidate 2 (Step 3 scoring)",
+        "url": "https://www.smithsbarandgrill.co.uk/hidden-gems/christmasday",
+        "score": 1344
+      },
+      {
+        "label": "Light-scraped candidate 3 (Step 3 scoring)",
+        "url": "https://www.coventgarden.london/experience/christmas-in-covent-garden",
+        "score": 1164
+      },
+      {
+        "label": "Light-scraped candidate 4 (Step 3 scoring)",
+        "url": "https://www.comparetheticketprice.com/event/christmas-eve-feast-at-smith's-bar-&-grill",
+        "score": 1084
+      },
+      {
+        "label": "Light-scraped candidate 5 (Step 3 scoring)",
+        "url": "https://www.instagram.com/thisissmiths/?hl=en",
+        "score": 474
+      },
+      {
+        "label": "Light-scraped candidate 6 (Step 3 scoring)",
+        "url": "https://www.instagram.com/p/DQwrOjmDJHP/",
+        "score": 471
+      },
+      {
+        "label": "Light-scraped candidate 7 (Step 3 scoring)",
+        "url": "https://www.tiktok.com/@snipingfordom/video/7580353416833125654",
+        "score": 231
+      }
+    ],
+    "deepScrapeCandidates": [
+      {
+        "label": "Deep scrape attempt 1 (Step 5 deep crawl)",
+        "url": "https://www.smithsbarandgrill.co.uk/hidden-gems/festiveseason",
+        "score": 1347
+      },
+      {
+        "label": "Deep scrape attempt 2 (Step 5 deep crawl)",
+        "url": "https://www.smithsbarandgrill.co.uk/hidden-gems/christmasday",
+        "score": 1347
+      },
+      {
+        "label": "Deep scrape attempt 3 (Step 5 deep crawl)",
+        "url": "https://www.coventgarden.london/experience/christmas-in-covent-garden",
+        "score": 1284
+      }
+    ],
+    "scoreThreshold": 750
+  },
+  "generatedAt": "2025-12-12T17:39:38.126Z"
+}

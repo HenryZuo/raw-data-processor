@@ -1,251 +1,201 @@
 [
   {
-    "id": "4862ef5c-197d-5907-58fe-9fd500164403--place",
-    "name": "Shrek's Adventure",
-    "summary": "Join Shrek on a magical adventure with a flying bus, fortune tellers, and more",
+    "id": "2b9a077a-a171-983c-f121-67360019727e--event",
+    "name": "A Christmas Carol",
+    "summary": "Experience the joyous adaptation of A Christmas Carol, a Victorian classic",
     "priceLevel": "££",
     "age": {
       "officialAgeAvailable": true,
-      "minAge": 6,
-      "maxAge": 12
+      "minAge": 8,
+      "maxAge": 18
     },
-    "url": "https://www.shreksadventure.com/plan-your-visit/before-you-visit/opening-hours/",
+    "url": "https://www.oldvictheatre.com/stage/a-christmas-carol-2024/",
     "source": "datathistle",
-    "lastUpdate": "2025-12-12T11:01:12.195Z",
+    "lastUpdate": "2025-12-12T20:09:16.499Z",
     "keywords": [
-      "shrek",
-      "adventure",
-      "london",
+      "christmas",
+      "carol",
+      "dickens",
+      "theatre",
       "family",
       "fun",
-      "days out",
+      "london",
+      "show",
+      "performance",
       "kids",
-      "theatre",
-      "dreamworks",
-      "ogre",
-      "fairytales",
-      "magic",
-      "bus",
-      "fortune",
-      "telllers",
-      "maze",
-      "insanity",
-      "kung fu panda",
-      "how to train your dragon",
-      "interactive",
-      "immersive",
-      "walkthrough",
-      "experience"
+      "holiday",
+      "seasonal",
+      "classic",
+      "victorian",
+      "adaptation",
+      "stage",
+      "play",
+      "entertainment",
+      "education",
+      "discover"
     ],
     "labels": [
       "indoor",
       "theatre",
-      "family-friendly"
+      "christmas"
     ],
-    "imageUrl": "https://files.datathistle.com/images/2019/11/19/98ca8a1b-c8e1-4d6b-abe5-39fcfc3bda6f-1211851-tablet-landscape-large-16-9-LST379039.jpg",
     "dates": {
-      "kind": "place",
-      "location": {
-        "addressLine": "County Hall, Belvedere Road, London, SE1 7PB",
-        "postcode": "SE1 7PB",
-        "city": "London",
-        "country": "United Kingdom",
-        "lat": 51.5028,
-        "lng": -0.11926,
-        "area": "South London"
-      },
-      "openingHours": {
-        "Sun": {
-          "open": "10:00",
-          "close": "16:00"
+      "kind": "event",
+      "instances": [
+        {
+          "date": "2025-12-04",
+          "startTime": "19:45",
+          "endTime": "20:45",
+          "location": {
+            "addressLine": "New Wimbledon Theatre, 93 The Broadway, London, SW19 1QG",
+            "postcode": "SW19 1QG",
+            "city": "London",
+            "country": "United Kingdom",
+            "lat": 51.41921,
+            "lng": -0.20144,
+            "area": "Greater London"
+          }
         },
-        "Mon": {
-          "open": "10:00",
-          "close": "16:00"
+        {
+          "date": "2025-12-05",
+          "startTime": "13:00",
+          "endTime": "14:00",
+          "location": {
+            "addressLine": "New Wimbledon Theatre, 93 The Broadway, London, SW19 1QG",
+            "postcode": "SW19 1QG",
+            "city": "London",
+            "country": "United Kingdom",
+            "lat": 51.41921,
+            "lng": -0.20144,
+            "area": "Greater London"
+          }
         },
-        "Tue": {
-          "open": "10:00",
-          "close": "16:00"
+        {
+          "date": "2025-12-05",
+          "startTime": "19:45",
+          "endTime": "20:45",
+          "location": {
+            "addressLine": "New Wimbledon Theatre, 93 The Broadway, London, SW19 1QG",
+            "postcode": "SW19 1QG",
+            "city": "London",
+            "country": "United Kingdom",
+            "lat": 51.41921,
+            "lng": -0.20144,
+            "area": "Greater London"
+          }
         },
-        "Wed": {
-          "open": "10:00",
-          "close": "15:00"
+        {
+          "date": "2025-12-06",
+          "startTime": "14:45",
+          "endTime": "15:45",
+          "location": {
+            "addressLine": "New Wimbledon Theatre, 93 The Broadway, London, SW19 1QG",
+            "postcode": "SW19 1QG",
+            "city": "London",
+            "country": "United Kingdom",
+            "lat": 51.41921,
+            "lng": -0.20144,
+            "area": "Greater London"
+          }
         },
-        "Thu": {
-          "open": "11:00",
-          "close": "15:00"
-        },
-        "Fri": {
-          "open": "11:00",
-          "close": "16:00"
-        },
-        "Sat": {
-          "open": "10:00",
-          "close": "16:00"
+        {
+          "date": "2025-12-06",
+          "startTime": "19:45",
+          "endTime": "20:45",
+          "location": {
+            "addressLine": "New Wimbledon Theatre, 93 The Broadway, London, SW19 1QG",
+            "postcode": "SW19 1QG",
+            "city": "London",
+            "country": "United Kingdom",
+            "lat": 51.41921,
+            "lng": -0.20144,
+            "area": "Greater London"
+          }
         }
-      },
-      "exceptions": [
+      ]
+    }
+  },
+  {
+    "id": "6a86830f-d726-ded9-3b19-c376002719c1--event",
+    "name": "The Dinosaur That Pooped: A Rock Show!",
+    "summary": "Join Danny and Dino on a fun-filled adventure with their favourite rock band!",
+    "priceLevel": "£",
+    "age": {
+      "officialAgeAvailable": false,
+      "minAge": 0,
+      "maxAge": 18
+    },
+    "url": "https://thedinosaurthatpoopedlive.com/",
+    "source": "datathistle",
+    "lastUpdate": "2025-12-12T20:09:34.988Z",
+    "keywords": [
+      "dinosaur",
+      "rock",
+      "show",
+      "family",
+      "fun",
+      "adventure",
+      "music",
+      "theatre",
+      "kids",
+      "concert",
+      "tickets",
+      "tour",
+      "uk",
+      "london",
+      "brighton",
+      "theatre",
+      "royal",
+      "butlins",
+      "bognor",
+      "regis",
+      "nottingham",
+      "playhouse",
+      "richmond",
+      "skegness",
+      "minehead",
+      "lincoln",
+      "runcorn",
+      "brindley",
+      "new",
+      "brighton"
+    ],
+    "labels": [
+      "indoor",
+      "theatre",
+      "family"
+    ],
+    "imageUrl": "https://files.datathistle.com/images/2025/04/24/650247ad-4af9-4766-8510-c88de322f2db-LST823946.webp",
+    "dates": {
+      "kind": "event",
+      "instances": [
         {
-          "status": "closed",
-          "date": "2025-12-01"
+          "date": "2026-02-01",
+          "startTime": "12:30",
+          "endTime": "13:30",
+          "location": {
+            "addressLine": "Richmond Theatre, The Little Green\nRichmond, London, TW9 1QJ",
+            "postcode": "TW9 1QJ",
+            "city": "London",
+            "country": "United Kingdom",
+            "lat": 51.46211,
+            "lng": -0.30384,
+            "area": "Greater London"
+          }
         },
         {
-          "status": "closed",
-          "date": "2025-12-02"
-        },
-        {
-          "status": "closed",
-          "date": "2025-12-03"
-        },
-        {
-          "status": "closed",
-          "date": "2025-12-04"
-        },
-        {
-          "status": "closed",
-          "date": "2025-12-05"
-        },
-        {
-          "status": "closed",
-          "date": "2025-12-06"
-        },
-        {
-          "status": "closed",
-          "date": "2025-12-07"
-        },
-        {
-          "status": "closed",
-          "date": "2025-12-08"
-        },
-        {
-          "status": "closed",
-          "date": "2025-12-09"
-        },
-        {
-          "status": "closed",
-          "date": "2025-12-10"
-        },
-        {
-          "status": "closed",
-          "date": "2025-12-11"
-        },
-        {
-          "status": "open",
-          "date": "2025-12-12",
-          "open": "10:00",
-          "close": "15:00"
-        },
-        {
-          "status": "open",
-          "date": "2025-12-13",
-          "open": "10:00",
-          "close": "16:00"
-        },
-        {
-          "status": "open",
-          "date": "2025-12-14",
-          "open": "10:00",
-          "close": "16:00"
-        },
-        {
-          "status": "open",
-          "date": "2025-12-15",
-          "open": "10:00",
-          "close": "15:00"
-        },
-        {
-          "status": "open",
-          "date": "2025-12-16",
-          "open": "10:00",
-          "close": "15:00"
-        },
-        {
-          "status": "open",
-          "date": "2025-12-17",
-          "open": "10:00",
-          "close": "15:00"
-        },
-        {
-          "status": "open",
-          "date": "2025-12-18",
-          "open": "11:00",
-          "close": "15:00"
-        },
-        {
-          "status": "open",
-          "date": "2025-12-19",
-          "open": "10:00",
-          "close": "15:00"
-        },
-        {
-          "status": "open",
-          "date": "2025-12-20",
-          "open": "10:00",
-          "close": "16:00"
-        },
-        {
-          "status": "open",
-          "date": "2025-12-21",
-          "open": "10:00",
-          "close": "16:00"
-        },
-        {
-          "status": "open",
-          "date": "2025-12-22",
-          "open": "10:00",
-          "close": "16:00"
-        },
-        {
-          "status": "open",
-          "date": "2025-12-23",
-          "open": "10:00",
-          "close": "16:00"
-        },
-        {
-          "status": "open",
-          "date": "2025-12-24",
-          "open": "10:00",
-          "close": "15:00"
-        },
-        {
-          "status": "closed",
-          "date": "2025-12-25"
-        },
-        {
-          "status": "open",
-          "date": "2025-12-26",
-          "open": "11:00",
-          "close": "16:00"
-        },
-        {
-          "status": "open",
-          "date": "2025-12-27",
-          "open": "10:00",
-          "close": "16:00"
-        },
-        {
-          "status": "open",
-          "date": "2025-12-28",
-          "open": "10:00",
-          "close": "16:00"
-        },
-        {
-          "status": "open",
-          "date": "2025-12-29",
-          "open": "10:00",
-          "close": "16:00"
-        },
-        {
-          "status": "open",
-          "date": "2025-12-30",
-          "open": "10:00",
-          "close": "16:00"
-        },
-        {
-          "status": "open",
-          "date": "2025-12-31",
-          "open": "10:00",
-          "close": "15:00"
+          "date": "2026-02-01",
+          "startTime": "15:30",
+          "endTime": "16:30",
+          "location": {
+            "addressLine": "Richmond Theatre, The Little Green\nRichmond, London, TW9 1QJ",
+            "postcode": "TW9 1QJ",
+            "city": "London",
+            "country": "United Kingdom",
+            "lat": 51.46211,
+            "lng": -0.30384,
+            "area": "Greater London"
+          }
         }
       ]
     }

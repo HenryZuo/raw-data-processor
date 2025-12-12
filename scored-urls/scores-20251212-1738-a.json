@@ -1,0 +1,74 @@
+{
+  "eventId": "2b9a077a-a171-983c-f121-67360019727e",
+  "eventName": "A Christmas Carol",
+  "pageScores": [
+    {
+      "url": "https://www.londontheatredirect.com/",
+      "score": 140
+    }
+  ],
+  "scores": [
+    {
+      "url": "https://www.londontheatredirect.com/",
+      "score": 122
+    }
+  ],
+  "deepScrapeUrl": null,
+  "officialUrlResolution": {
+    "summary": "Light-scraped URLs and deep-scrape attempts used before selecting the final official URL.",
+    "finalOfficialUrl": "https://www.londontheatredirect.com/",
+    "bestDeepUrl": "https://www.londontheatredirect.com/tickets/christmas-theatre-in-london?srsltid=AfmBOoroKPe4I_421D6A3fSNKGaDNRNOLGg8IRqo7QbDcqoGtm-EvAE3",
+    "bestDeepScore": 1084,
+    "lightScrapedCandidates": [
+      {
+        "label": "Light-scraped candidate 1 (Step 3 scoring)",
+        "url": "https://www.oldvictheatre.com/stage/a-christmas-carol-2024/",
+        "score": 1501
+      },
+      {
+        "label": "Light-scraped candidate 2 (Step 3 scoring)",
+        "url": "https://www.grandtheatre.com/ring-holidays-grand-christmas-carol",
+        "score": 1347
+      },
+      {
+        "label": "Light-scraped candidate 3 (Step 3 scoring)",
+        "url": "https://www.londontheatredirect.com/tickets/christmas-theatre-in-london?srsltid=AfmBOoroKPe4I_421D6A3fSNKGaDNRNOLGg8IRqo7QbDcqoGtm-EvAE3",
+        "score": 994
+      },
+      {
+        "label": "Light-scraped candidate 4 (Step 3 scoring)",
+        "url": "https://www.birmingham-rep.co.uk/whats-on/a-christmas-carol-a-ghost-story/",
+        "score": 951
+      },
+      {
+        "label": "Light-scraped candidate 5 (Step 3 scoring)",
+        "url": "https://www.atgtickets.com/shows/a-christmas-carol/",
+        "score": 841
+      },
+      {
+        "label": "Light-scraped candidate 6 (Step 3 scoring)",
+        "url": "https://www.londontheatre.co.uk/whats-on",
+        "score": 757
+      }
+    ],
+    "deepScrapeCandidates": [
+      {
+        "label": "Deep scrape attempt 1 (Step 5 deep crawl)",
+        "url": "https://www.oldvictheatre.com/stage/a-christmas-carol-2024/",
+        "score": null
+      },
+      {
+        "label": "Deep scrape attempt 2 (Step 5 deep crawl)",
+        "url": "https://www.grandtheatre.com/ring-holidays-grand-christmas-carol",
+        "score": null
+      },
+      {
+        "label": "Deep scrape attempt 3 (Step 5 deep crawl)",
+        "url": "https://www.londontheatredirect.com/tickets/christmas-theatre-in-london?srsltid=AfmBOoroKPe4I_421D6A3fSNKGaDNRNOLGg8IRqo7QbDcqoGtm-EvAE3",
+        "score": 1084
+      }
+    ],
+    "scoreThreshold": 750
+  },
+  "generatedAt": "2025-12-12T17:38:04.377Z"
+}

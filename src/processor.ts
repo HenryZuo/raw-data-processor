@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import fs from 'fs/promises';
 import path from 'path';
 import { mapAddressToAreas, activitySchema } from './schema-loader.js';
-import { resolveOfficialUrl } from './url-resolver.js';
+import { resolveOfficialUrl, OFFICIAL_URL_SCORE_THRESHOLD } from './url-resolver.js';
 import { getOfficialUrlAndContent, type OfficialContentResult } from './scraper.js';
 import { fetchLLMDataWithRetries, ActivityLLMOutput } from './llm.js';
 import {
@@ -18,7 +18,7 @@ import {
 } from './utils.js';
 import { DAY_LABELS } from './types.js';
 import { extractHoursFromText } from './utils/opening-hours-parser.js';
-import type { DayLabel, PageScrapeResult, SourceEvent } from './types.js';
+import type { DayLabel, PageScrapeResult, SourceEvent, OfficialUrlResolutionResult } from './types.js';
 import type {
   Activity,
   Dates,
@@ -62,18 +62,30 @@ async function exportScoredUrls(
   pageScores: { url: string; score: number }[],
   scores: { url: string; score: number }[],
   deepScrapeUrl: string | null,
+  officialUrlResolution: OfficialUrlResolutionResult,
 ): Promise<void> {
   try {
     await fs.mkdir(SCORED_URLS_DIR, { recursive: true });
     const timestamp = formatExportTimestamp();
     const nameSegment = sanitizeNameForFilename(eventName);
     const filename = `scores-${timestamp}-${nameSegment}.json`;
+    const lightScrapeCandidates = officialUrlResolution.lightScrapeCandidates.map((candidate, index) => ({
+      label: `Light-scraped candidate ${index + 1} (Step 3 scoring)`,
+      url: candidate.url,
+      score: candidate.score,
+    }));
     const payload = {
       eventId,
       eventName,
       pageScores,
       scores,
       deepScrapeUrl,
+      officialUrlResolution: {
+        summary: 'Light-scraped URLs used before selecting the final official URL.',
+        finalOfficialUrl: officialUrlResolution.officialUrl,
+        lightScrapedCandidates: lightScrapeCandidates,
+        scoreThreshold: OFFICIAL_URL_SCORE_THRESHOLD,
+      },
       generatedAt: new Date().toISOString(),
     };
     await fs.writeFile(path.join(SCORED_URLS_DIR, filename), `${JSON.stringify(payload, null, 2)}\n`, 'utf-8');
@@ -270,6 +282,67 @@ function choosePrimaryDateUrl(result: OfficialContentResult, officialUrl: string
     return { url: structuredPage.url, source: 'primary date/time page' };
   }
   return { url: officialUrl, source: 'official URL fallback' };
+}
+
+function formatIsoDateFromTimestamp(value: string): string | null {
+  try {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return null;
+    return date.toISOString().slice(0, 10);
+  } catch {
+    return null;
+  }
+}
+
+function formatTimeFromTimestamp(value: string): string | null {
+  try {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return null;
+    return date.toISOString().slice(11, 16);
+  } catch {
+    return null;
+  }
+}
+
+function addMinutesToTime(time: string, minutes: number): string {
+  const [hourStr, minuteStr] = time.split(':');
+  const hour = Number(hourStr);
+  const minute = Number(minuteStr);
+  if (Number.isNaN(hour) || Number.isNaN(minute)) {
+    return time;
+  }
+  const totalMinutes = ((hour * 60 + minute + Math.round(minutes)) % (24 * 60) + 24 * 60) % (24 * 60);
+  const newHour = Math.floor(totalMinutes / 60);
+  const newMinute = totalMinutes % 60;
+  return `${String(newHour).padStart(2, '0')}:${String(newMinute).padStart(2, '0')}`;
+}
+
+function buildEventDatesFromPerformances(event: SourceEvent, location: SharedLocation): EventDates | null {
+  const instances: EventDates['instances'] = [];
+  const seen = new Set<string>();
+  for (const schedule of event.schedules ?? []) {
+    for (const performance of schedule.performances ?? []) {
+      if (!performance.ts) continue;
+      const isoDate = formatIsoDateFromTimestamp(performance.ts);
+      const startTime = formatTimeFromTimestamp(performance.ts);
+      if (!isoDate || !startTime) continue;
+      const duration = Number.isFinite(performance.duration ?? NaN) && performance.duration! > 0 ? performance.duration! : 60;
+      const endTime = addMinutesToTime(startTime, duration);
+      const key = `${isoDate}|${startTime}|${endTime}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      instances.push({
+        date: isoDate,
+        startTime,
+        endTime,
+        location,
+      });
+    }
+  }
+  if (!instances.length) {
+    return null;
+  }
+  return { kind: 'event', instances };
 }
 
 function toMinutes(time: string): number {
@@ -558,11 +631,12 @@ export async function processEvents(events: SourceEvent[], groqApiKey: string) {
       area,
     };
 
-    const officialUrl = await resolveOfficialUrl(event);
+    const resolution = await resolveOfficialUrl(event, location);
+    const officialUrl = resolution.officialUrl;
     if (!officialUrl) {
-      setTaskStatus(statuses, 0, 'fail', 'no official descriptive URL found');
+      setTaskStatus(statuses, 0, 'fail', 'no confident official URL found');
       logAndContinue();
-      skipped.push({ id: event.event_id, reason: 'no official descriptive URL found' });
+      skipped.push({ id: event.event_id, reason: 'no confident official URL found' });
       continue;
     }
     setTaskStatus(statuses, 0, 'success', 'URL identified');
@@ -583,7 +657,14 @@ export async function processEvents(events: SourceEvent[], groqApiKey: string) {
       )}`,
       event.event_id,
     );
-    await exportScoredUrls(event.event_id, event.name, result.scoredUrls, result.scores, result.deepScrapeUrl);
+    await exportScoredUrls(
+      event.event_id,
+      event.name,
+      result.scoredUrls,
+      result.scores,
+      result.deepScrapeUrl,
+      resolution,
+    );
 
     if (!result.allScrapedPages.length) {
       setTaskStatus(statuses, 1, 'fail', 'official page scrape failed');
@@ -602,27 +683,35 @@ export async function processEvents(events: SourceEvent[], groqApiKey: string) {
       await exportScrapedContent(event.event_id, event.name, page, index);
     }
 
-    if (!result.dateTimePage) {
-      setTaskStatus(statuses, 2, 'fail', 'no high-quality date/time page');
-      logAndContinue();
-      skipped.push({
-        id: event.event_id,
-        reason: 'no high-quality date/time page found in top 3 hour-scored candidates',
-      });
-      continue;
-    }
-    if (!result.preClassifiedType || !result.preExtractedDates) {
-      setTaskStatus(statuses, 2, 'fail', 'no valid dates/times extracted');
-      logWarn(
-        'Excluding activity: no valid dates or times could be extracted (neither place hours nor event instances)',
+    let usedRawFallback = false;
+    if (!result.preExtractedDates) {
+      logDebug(
+        'Using raw data fallback for dates/times (no high-quality scrape extraction)',
         event.event_id,
       );
-      skipped.push({
-        id: event.event_id,
-        reason: 'no date/time information available',
-      });
-      logAndContinue();
-      continue;
+      const fallbackDates = buildEventDatesFromPerformances(event, location);
+      if (!fallbackDates) {
+        setTaskStatus(statuses, 2, 'fail', 'no dates/times available (scrape + raw fallback failed)');
+        logWarn(
+          'Excluding activity: no valid dates or times could be extracted (neither place hours nor event instances)',
+          event.event_id,
+        );
+        skipped.push({
+          id: event.event_id,
+          reason: 'no dates/times available',
+        });
+        logAndContinue();
+        continue;
+      }
+      usedRawFallback = true;
+      result.preExtractedDates = fallbackDates;
+      result.preClassifiedType = 'event';
+      logInfo(
+        `[FALLBACK] Using raw Data Thistle performances for dates (${fallbackDates.instances.length} instance${
+          fallbackDates.instances.length === 1 ? '' : 's'
+        })`,
+        event.event_id,
+      );
     }
     if (result.dateTimePage && result.preClassifiedType === 'place') {
       const refined = await maybeApplyCalendarFallback(
@@ -633,8 +722,13 @@ export async function processEvents(events: SourceEvent[], groqApiKey: string) {
       result.preExtractedDates = refined;
       result.preClassifiedType = 'place';
     }
-    setTaskStatus(statuses, 2, 'success', 'dates/times extracted');
-    logDebug('Step 3: extracted dates/times from official pages', event.event_id);
+    if (usedRawFallback) {
+      setTaskStatus(statuses, 2, 'success', 'dates/times from raw fallback');
+      logDebug('Step 3: using raw fallback for dates/times', event.event_id);
+    } else {
+      setTaskStatus(statuses, 2, 'success', 'dates/times extracted');
+      logDebug('Step 3: extracted dates/times from official pages', event.event_id);
+    }
 
     if (isBookingDomain(officialUrl)) {
       setTaskStatus(statuses, 3, 'fail', 'official URL is a booking domain');
@@ -654,7 +748,10 @@ export async function processEvents(events: SourceEvent[], groqApiKey: string) {
         if (generalPagesList.length >= 2) break;
       }
     }
-    const pagesForLLM = [result.dateTimePage, ...generalPagesList.slice(0, 2)];
+    const candidatePagesForLLM = [result.dateTimePage, ...generalPagesList.slice(0, 2)];
+    const pagesForLLM = candidatePagesForLLM.filter(
+      (page): page is PageScrapeResult => Boolean(page),
+    );
     const llmData = await fetchLLMDataWithRetries(event, pagesForLLM, groqApiKey);
     if (!llmData) {
       setTaskStatus(statuses, 4, 'fail', 'LLM returned null (all attempts failed)');
@@ -675,15 +772,19 @@ export async function processEvents(events: SourceEvent[], groqApiKey: string) {
     setTaskStatus(statuses, 4, 'success', 'Groq response valid');
     logDebug('Step 5: received LLM response', event.event_id);
 
-    const primaryDateInfo = choosePrimaryDateUrl(result, officialUrl);
+    const primaryDateInfo = usedRawFallback
+      ? { url: null, source: 'raw data fallback' }
+      : choosePrimaryDateUrl(result, officialUrl);
+    const primaryDateUrlLabel = primaryDateInfo.url ?? 'n/a';
     logDebug(
-      `Primary date/time source resolved to ${primaryDateInfo.source} (${primaryDateInfo.url})`,
+      `Primary date/time source resolved to ${primaryDateInfo.source} (${primaryDateUrlLabel})`,
       event.event_id,
     );
 
     try {
+      const preClassifiedType = result.preClassifiedType ?? 'event';
       const canonicalDates: Dates =
-        result.preClassifiedType === 'place'
+        preClassifiedType === 'place'
           ? ({
               ...(result.preExtractedDates as PlaceDates),
               kind: 'place',
@@ -699,7 +800,7 @@ export async function processEvents(events: SourceEvent[], groqApiKey: string) {
         pagesForLLM,
         scrapedOfficialUrl,
         canonicalDates,
-        result.preClassifiedType,
+        preClassifiedType,
         primaryDateInfo.url,
         primaryDateInfo.source,
       );
@@ -736,12 +837,13 @@ async function buildActivity(
   scrapedOfficialUrl: string | null,
   dates: Dates,
   preClassifiedType: 'place' | 'event',
-  primaryDateUrl: string,
+  primaryDateUrl: string | null,
   primaryDateSource: string,
 ): Promise<Activity | null> {
   const imageUrl = event.images?.[0]?.url;
 
-  const finalUrl = primaryDateUrl || scrapedOfficialUrl || officialUrl;
+  const fallbackWebsite = event.website?.trim();
+  const finalUrl = primaryDateUrl ?? officialUrl ?? fallbackWebsite ?? officialUrl;
   const priceInfo = determinePriceLevel(event, scrapedPages);
 
   const typeSuffix = preClassifiedType;
@@ -769,7 +871,15 @@ async function buildActivity(
     `[PRICE] level=${priceInfo.level} value=${priceInfo.value ?? 'n/a'} source=${priceInfo.source}`,
     event.event_id,
   );
-  logDebug(`[URL] resolved to ${finalUrl} (${primaryDateSource})`, event.event_id);
+  let finalUrlSource = 'official light scrape';
+  if (primaryDateUrl) {
+    finalUrlSource = primaryDateSource;
+  } else if (!officialUrl && fallbackWebsite) {
+    finalUrlSource = 'raw event.website';
+  } else if (!officialUrl) {
+    finalUrlSource = 'unknown';
+  }
+  logDebug(`[URL] resolved to ${finalUrl} (source: ${finalUrlSource})`, event.event_id);
 
   if (preClassifiedType === 'place') {
     const placeDates = dates as PlaceDates;

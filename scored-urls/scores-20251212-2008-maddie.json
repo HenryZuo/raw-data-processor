@@ -1,0 +1,50 @@
+{
+  "eventId": "61ef1509-8028-362a-af0f-2a660025c34d",
+  "eventName": "Maddie Moate's Very Curious Christmas",
+  "pageScores": [
+    {
+      "url": "https://nimaxtheatres.com/",
+      "score": 140
+    }
+  ],
+  "scores": [
+    {
+      "url": "https://nimaxtheatres.com/",
+      "score": 122
+    }
+  ],
+  "deepScrapeUrl": null,
+  "officialUrlResolution": {
+    "summary": "Light-scraped URLs used before selecting the final official URL.",
+    "finalOfficialUrl": "https://nimaxtheatres.com/shows/maddies-curious-christmas-live-on-stage/",
+    "lightScrapedCandidates": [
+      {
+        "label": "Light-scraped candidate 1 (Step 3 scoring)",
+        "url": "https://nimaxtheatres.com/shows/maddies-curious-christmas-live-on-stage/",
+        "score": 1931
+      },
+      {
+        "label": "Light-scraped candidate 2 (Step 3 scoring)",
+        "url": "https://www.maddiemoate.com/verycuriouschristmaslive",
+        "score": 1577
+      },
+      {
+        "label": "Light-scraped candidate 3 (Step 3 scoring)",
+        "url": "https://www.familytickets.com/collections/maddie-moate-s-very-curious-christmas?srsltid=AfmBOopxdaJUMO1v10edpe2AhUJ4zA08NbsoAJr4GodqOwIzkobKTdEK",
+        "score": 1384
+      },
+      {
+        "label": "Light-scraped candidate 4 (Step 3 scoring)",
+        "url": "https://www.westendtheatre.com/245274/shows/maddie-moates-very-curious-christmas-tickets/",
+        "score": 1148
+      },
+      {
+        "label": "Light-scraped candidate 5 (Step 3 scoring)",
+        "url": "https://www.londontheatredirect.com/play/maddie-moates-very-curious-christmas-tickets?srsltid=AfmBOopeBWMT5fA7ICjj6JY29vRrgQgJFl9qU7zSr4Hpcx9AFQ_BYJxm",
+        "score": 1094
+      }
+    ],
+    "scoreThreshold": 750
+  },
+  "generatedAt": "2025-12-12T20:08:47.630Z"
+}

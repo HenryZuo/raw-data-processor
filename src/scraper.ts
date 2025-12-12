@@ -19,10 +19,12 @@ import {
   generateSmartHoursGuesses,
   parseTimeTo24h,
   ensureIsoDate,
+  normalizeActivityForHostname,
+  USER_AGENT_STRINGS,
 } from './utils.js';
-import { normalizeActivityForHostname } from './url-resolver.js';
+import { OFFICIAL_SIGNAL_REGEX, AGGREGATOR_REGEX, PREFERRED_VENUE_REGEX } from './url-constants.js';
 import { DAY_LABELS } from './types.js';
-import type { DayLabel, JsonLdEvent, JsonLdHoursResult, PageScrapeResult, RawDateTimeInstance } from './types.js';
+import type { DayLabel, JsonLdEvent, JsonLdHoursResult, PageScrapeResult, RawDateTimeInstance, SourceEvent } from './types.js';
 import type {
   Dates,
   Exception as SharedException,
@@ -80,6 +82,397 @@ function scoreUrlForTimeInfo(page: PageScrapeResult): number {
     page.url,
   );
   return finalScore;
+}
+
+const LIGHT_SCRAPE_TIMEOUT_MS = 10_000;
+const LIGHT_SCRAPE_TEXT_LIMIT = 8_000;
+
+interface OfficialScoreOptions {
+  includeJsonLdBonus?: boolean;
+}
+
+function extractTagContent(html: string, tag: string): string {
+  const pattern = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i');
+  return (pattern.exec(html)?.[1] ?? '').trim();
+}
+
+function extractMetaDescription(html: string): string {
+  const pattern =
+    /<meta[^>]*(?:name=["']description["']|property=["']og:description["'])[^>]*content=["']([^"']+)["'][^>]*>/i;
+  return (pattern.exec(html)?.[1] ?? '').trim();
+}
+
+function buildEventTokens(event: SourceEvent): string[] {
+  const collector = new Set<string>();
+  const addTokens = (text?: string) => {
+    if (!text) return;
+    text
+      .toLowerCase()
+      .replace(/[’'‘`]/g, '')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .split(' ')
+      .map((token) => token.trim())
+      .filter((token) => token.length >= 3 && token !== 'london')
+      .forEach((token) => collector.add(token));
+  };
+  addTokens(event.name);
+  for (const description of event.descriptions ?? []) {
+    addTokens(description.description);
+  }
+  return Array.from(collector);
+}
+
+function buildEventDateSet(event: SourceEvent): Set<string> {
+  const dates = new Set<string>();
+  const consider = (raw?: string) => {
+    if (!raw) return;
+    const normalized = raw.slice(0, 10);
+    if (normalized.length === 10) {
+      dates.add(normalized);
+    }
+  };
+  for (const schedule of event.schedules ?? []) {
+    consider(schedule.start_ts);
+    for (const performance of schedule.performances ?? []) {
+      consider(performance.ts);
+    }
+  }
+  return dates;
+}
+
+export async function lightScrapeUrl(url: string): Promise<PageScrapeResult | null> {
+  try {
+    const headers = {
+      'User-Agent': USER_AGENT_STRINGS[Math.floor(Math.random() * USER_AGENT_STRINGS.length)],
+      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    };
+    const response = await fetch(url, {
+      headers,
+      redirect: 'follow',
+      signal: AbortSignal.timeout(LIGHT_SCRAPE_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      logDebug(`light scrape failed for ${url}: status ${response.status}`, 'scraper');
+      return null;
+    }
+    const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
+    if (!contentType.includes('text/html') && !contentType.includes('application/xhtml+xml')) {
+      return null;
+    }
+    const html = await response.text();
+    const snippet = cleanText(html.slice(0, 60_000)).slice(0, LIGHT_SCRAPE_TEXT_LIMIT);
+    if (!snippet.length) return null;
+    const title = cleanText(extractTagContent(html, 'title')).slice(0, 200);
+    const description = cleanText(extractMetaDescription(html)).slice(0, 400);
+    const structured: PageScrapeResult['structured'] = {};
+    if (description) {
+      structured.description = description;
+    }
+    return {
+      url: response.url || url,
+      title,
+      text: snippet,
+      structured,
+    };
+  } catch (error) {
+    logDebug(`light scrape failed for ${url}: ${(error as Error).message}`, 'scraper');
+    return null;
+  }
+}
+
+export function scoreForOfficialUrl(page: PageScrapeResult, event: SourceEvent, options?: OfficialScoreOptions): number {
+  const tokens = buildEventTokens(event);
+  const text = page.text.toLowerCase();
+  const title = page.title.toLowerCase();
+  const description = (page.structured.description ?? '').toLowerCase();
+  const summary = `${title} ${text} ${description}`;
+  const urlLower = page.url.toLowerCase();
+  const htmlContent = (page.html ?? '').toLowerCase();
+  const aggregatedContent = `${summary} ${htmlContent}`;
+  const hostname = (() => {
+    try {
+      return new URL(page.url).hostname.toLowerCase();
+    } catch {
+      return '';
+    }
+  })();
+  const normalizedHostname = hostname.replace(/^www\./, '');
+  const normalizedName = normalizeActivityForHostname(event.name);
+
+  let score = 0;
+  if (normalizedName && urlLower.includes(normalizedName)) {
+    score += 600;
+  }
+  const nameTokens = event.name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .split(' ')
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 4);
+  const tokenMatches = nameTokens.filter((token) => urlLower.includes(token));
+  if (tokenMatches.length >= 2) {
+    score += 400;
+  }
+  const nameMatches = tokens.filter((token) => summary.includes(token)).length;
+  score += Math.min(nameMatches, 8) * 120;
+  const descriptionMatches = tokens.filter((token) => description.includes(token)).length;
+  score += Math.min(descriptionMatches, 4) * 60;
+
+  if (OFFICIAL_SIGNAL_REGEX.test(summary)) {
+    score += 150;
+  }
+
+  if (PREFERRED_VENUE_REGEX.test(normalizedHostname)) {
+    score += 150;
+  }
+  if (AGGREGATOR_REGEX.test(`${summary} ${urlLower}`)) {
+    score -= 350;
+  }
+  if (/buy tickets|compare prices|multiple sellers|resale|secondary market|from £\d+|prices from/i.test(text)) {
+    score -= 200;
+  }
+  const eventDensity = (text.match(/jsonld.*event/gi)?.length ?? 0) + (text.match(/performance|show date/gi)?.length ?? 0);
+  if (eventDensity > 10) {
+    score -= 150;
+  }
+  if (/ticketmaster|axs|seetickets|eventbrite/i.test(aggregatedContent)) {
+    score -= 150;
+  }
+
+  score -= Math.max(0, page.url.split('/').length - 3) * 3;
+
+  if (options?.includeJsonLdBonus) {
+    const eventDates = buildEventDateSet(event);
+    const jsonLdEvents = page.structured.jsonLdEvents ?? [];
+    if (
+      jsonLdEvents.some((entry) =>
+        Boolean(entry.name && tokens.some((token) => entry.name!.toLowerCase().includes(token))),
+      )
+    ) {
+      score += 150;
+    }
+    if (
+      jsonLdEvents.some((entry) => {
+        const datePart = (entry.startDate ?? entry.endDate ?? '').slice(0, 10);
+        return datePart && eventDates.has(datePart);
+      })
+    ) {
+      score += 90;
+    }
+    if (jsonLdEvents.length > 5 || page.structured.jsonLdHours) {
+      const suspiciousAggregator =
+        AGGREGATOR_REGEX.test(aggregatedContent) || /compare|resale/i.test(text);
+      score += suspiciousAggregator ? 50 : 200;
+    }
+  }
+
+  return Math.round(score);
+}
+
+const DEEP_LINK_INCLUDE_KEYWORDS = ['about', 'contact', 'visit', 'info', 'details', 'plan', 'overview', 'experience'];
+const DEEP_LINK_EXCLUDE_KEYWORDS = ['hour', 'hours', 'calendar', 'schedule', 'ticket', 'book', 'buy', 'price', 'pricing', 'list'];
+
+async function captureDeepSnapshot(page: Page, jsonLdPool: Set<string>): Promise<PageScrapeResult | null> {
+  const snapshotHtml = await page.content();
+  const rawText = await page.evaluate(() => document.body?.innerText ?? '');
+  const snapshotText = cleanText(rawText).slice(0, 20_000);
+  if (!snapshotText.length) return null;
+  const title = cleanText(await page.title()).slice(0, 200);
+  const metaDescription = await page.evaluate(() => {
+    const selectors = [
+      'meta[name="description"]',
+      'meta[property="og:description"]',
+      'meta[name="twitter:description"]',
+    ];
+    for (const selector of selectors) {
+      const element = document.querySelector(selector) as HTMLMetaElement | null;
+      if (element?.content?.trim()) {
+        return element.content.trim();
+      }
+    }
+    return '';
+  });
+
+  const jsonLdMatches = snapshotHtml.match(
+    /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi,
+  ) ?? [];
+  const payloads = jsonLdMatches
+    .map((match) => match.replace(/<script[^>]*>|<\/script>/gi, ''))
+    .map((value) => value.trim())
+    .filter((value) => Boolean(value));
+  const entries = parseJsonLd([...payloads, ...Array.from(jsonLdPool)]);
+
+  const structured: PageScrapeResult['structured'] = {
+    description: metaDescription ? cleanText(metaDescription).slice(0, 400) : '',
+    priceText: '',
+    ageText: '',
+    openingHoursText: '',
+    addressText: '',
+    extractedHours: '',
+    extractedAge: '',
+    extractedPrice: '',
+    extractedDescription: '',
+    jsonLdHours: undefined,
+    jsonLdEvents: [],
+  };
+  const jsonLdEvents: JsonLdEvent[] = [];
+  let jsonLdHours: JsonLdHoursResult | undefined;
+  for (const entry of entries) {
+    const record = entry as Record<string, unknown>;
+    const rawType = record['@type'];
+    const typeCandidates: string[] = [];
+    if (Array.isArray(rawType)) {
+      for (const candidate of rawType) {
+        if (typeof candidate === 'string') {
+          typeCandidates.push(candidate.toLowerCase());
+        }
+      }
+    } else if (typeof rawType === 'string') {
+      typeCandidates.push(rawType.toLowerCase());
+    }
+    if (typeCandidates.some((value) => value.includes('event'))) {
+      jsonLdEvents.push({
+        startDate: typeof record.startDate === 'string' ? record.startDate : undefined,
+        endDate: typeof record.endDate === 'string' ? record.endDate : undefined,
+        startTime: typeof record.startTime === 'string' ? record.startTime : undefined,
+        doorTime: typeof record.doorTime === 'string' ? record.doorTime : undefined,
+        eventStatus: typeof record.eventStatus === 'string' ? record.eventStatus : undefined,
+        name: typeof record.name === 'string' ? record.name : undefined,
+      });
+    }
+    const rawSpec = record.openingHoursSpecification ?? record.openingHours;
+    if (!rawSpec) continue;
+    const specArray = Array.isArray(rawSpec) ? rawSpec : [rawSpec];
+    const parsed = parseJsonLdHours(specArray);
+    if (!parsed) continue;
+    jsonLdHours = parsed;
+    if (Object.keys(parsed.hours ?? {}).length >= 4) {
+      break;
+    }
+  }
+
+  structured.jsonLdEvents = jsonLdEvents;
+  structured.jsonLdHours = jsonLdHours;
+
+  return {
+    url: page.url(),
+    title,
+    text: snapshotText,
+    structured,
+    html: snapshotHtml,
+  };
+}
+
+async function extractDeepLinks(page: Page): Promise<string[]> {
+  const origin = (() => {
+    try {
+      return new URL(page.url()).origin;
+    } catch {
+      return '';
+    }
+  })();
+  if (!origin) return [];
+  return page.$$eval(
+    'a[href]',
+    (
+      anchors: HTMLAnchorElement[],
+      metadata: { includeKeywords: string[]; excludeKeywords: string[]; pageOrigin: string },
+    ) => {
+      const { includeKeywords, excludeKeywords, pageOrigin } = metadata;
+      const candidates: string[] = [];
+      const seen = new Set<string>();
+      for (const anchor of anchors) {
+        const href = anchor.getAttribute('href');
+        if (!href) continue;
+        let resolved: URL;
+        try {
+          resolved = new URL(href, pageOrigin);
+        } catch {
+          continue;
+        }
+        const normalized = resolved.origin === pageOrigin ? `${resolved.origin}${resolved.pathname}` : '';
+        if (!normalized) continue;
+        if (seen.has(normalized)) continue;
+        const text = `${anchor.textContent ?? ''} ${resolved.pathname}`.toLowerCase();
+        const includes = includeKeywords.some((keyword) => text.includes(keyword));
+        const excludes = excludeKeywords.some((keyword) => text.includes(keyword));
+        if (!includes || excludes) continue;
+        seen.add(normalized);
+        candidates.push(resolved.href.split('#')[0]);
+      }
+      return candidates;
+    },
+    {
+      includeKeywords: DEEP_LINK_INCLUDE_KEYWORDS,
+      excludeKeywords: DEEP_LINK_EXCLUDE_KEYWORDS,
+      pageOrigin: origin,
+    },
+  );
+}
+
+export async function attemptDeepScrape(url: string, userAgents: string[]): Promise<PageScrapeResult[]> {
+  let browser: Browser | null = null;
+  try {
+    const launchedBrowser = await chromium.launch(getLaunchOptions());
+    browser = launchedBrowser;
+    const context = await launchedBrowser.newContext({
+      viewport: getRandomViewport(),
+      userAgent: getRandomUserAgent(userAgents),
+    });
+    const page = await context.newPage();
+    await page.route('**/*', (route: PlaywrightRoute) => {
+      const resourceType = route.request().resourceType();
+      if (['image', 'stylesheet', 'font', 'media'].includes(resourceType)) {
+        return route.abort();
+      }
+      return route.continue();
+    });
+
+    const jsonLdPool = new Set<string>();
+    page.on('response', async (response: Response) => {
+      const contentType = (response.headers()['content-type'] ?? '').toLowerCase();
+      if (!contentType.includes('json')) return;
+      try {
+        const payload = await response.text();
+        if (payload.includes('@context') || payload.includes('"@type"')) {
+          jsonLdPool.add(payload.trim());
+        }
+      } catch {
+        // ignore
+      }
+    });
+
+    const snapshots: PageScrapeResult[] = [];
+    const captureSnapshot = async () => {
+      const snapshot = await captureDeepSnapshot(page, jsonLdPool);
+      if (snapshot) {
+        snapshots.push(snapshot);
+      }
+    };
+
+    await page.goto(url, { waitUntil: 'networkidle', timeout: 15_000 });
+    await captureSnapshot();
+    if (snapshots.length >= 3) {
+      return snapshots.slice(0, 3);
+    }
+
+    const deepLinks = await extractDeepLinks(page);
+    for (const link of deepLinks.slice(0, 2)) {
+      if (snapshots.length >= 3) break;
+      await page.goto(link, { waitUntil: 'networkidle', timeout: 15_000 }).catch(() => null);
+      await page.waitForTimeout(1200);
+      await captureSnapshot();
+    }
+
+    return snapshots.slice(0, 3);
+  } catch (error) {
+    logDebug(`[DeepScrape] failed for ${url}: ${(error as Error).message}`, 'scraper');
+    return [];
+  } finally {
+    if (browser) {
+      await browser.close();
+    }
+  }
 }
 
 const SCRAPE_TIMEOUT_MS = 15_000;

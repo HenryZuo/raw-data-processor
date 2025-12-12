@@ -1,0 +1,79 @@
+{
+  "eventId": "ca33f1cb-355e-eefc-1e7b-22760026d8f5",
+  "eventName": "48-Hour Hop on Hop Off London Bus Tour with Thames River Cruise",
+  "pageScores": [
+    {
+      "url": "https://london.city-tour.com/es/",
+      "score": 20
+    }
+  ],
+  "scores": [
+    {
+      "url": "https://london.city-tour.com/es/",
+      "score": 156
+    }
+  ],
+  "deepScrapeUrl": null,
+  "officialUrlResolution": {
+    "summary": "Light-scraped URLs and deep-scrape attempts used before selecting the final official URL.",
+    "finalOfficialUrl": "https://london.city-tour.com/",
+    "bestDeepUrl": "https://london.city-tour.com/en/about-us",
+    "bestDeepScore": 1344,
+    "lightScrapedCandidates": [
+      {
+        "label": "Light-scraped candidate 1 (Step 3 scoring)",
+        "url": "https://www.hop-on-hop-off-tickets.com/london-bus-tours/",
+        "score": 1344
+      },
+      {
+        "label": "Light-scraped candidate 2 (Step 3 scoring)",
+        "url": "https://london.city-tour.com/en/tickets/hop-on-hop-off",
+        "score": 1341
+      },
+      {
+        "label": "Light-scraped candidate 3 (Step 3 scoring)",
+        "url": "https://www.tootbus.com/en/london/product/e697bf6d-32a4-4337-9170-1128052485ac",
+        "score": 1338
+      },
+      {
+        "label": "Light-scraped candidate 4 (Step 3 scoring)",
+        "url": "https://londoncitybustours.com/the-original-hop-on-hop-off-london-bus-tour.html",
+        "score": 1197
+      },
+      {
+        "label": "Light-scraped candidate 5 (Step 3 scoring)",
+        "url": "https://topviewtix.com/london/discover-pass-24hours?srsltid=AfmBOoqSaYuKramNxUOLIZ6Pf4d8aJLLfPK3rTlPWnrP8UrSmB0FMWqv",
+        "score": 1194
+      },
+      {
+        "label": "Light-scraped candidate 6 (Step 3 scoring)",
+        "url": "https://www.londoneye.com/tickets-and-prices/sightseeing-tours/",
+        "score": 1191
+      },
+      {
+        "label": "Light-scraped candidate 7 (Step 3 scoring)",
+        "url": "https://city-sightseeing.com/en/95/london/3286/hop-on-hop-off-london-thames-river-cruise",
+        "score": 1095
+      }
+    ],
+    "deepScrapeCandidates": [
+      {
+        "label": "Deep scrape attempt 1 (Step 5 deep crawl)",
+        "url": "https://www.hop-on-hop-off-tickets.com/london-bus-tours/",
+        "score": null
+      },
+      {
+        "label": "Deep scrape attempt 2 (Step 5 deep crawl)",
+        "url": "https://london.city-tour.com/en/tickets/hop-on-hop-off",
+        "score": 1344
+      },
+      {
+        "label": "Deep scrape attempt 3 (Step 5 deep crawl)",
+        "url": "https://www.tootbus.com/en/london/product/e697bf6d-32a4-4337-9170-1128052485ac",
+        "score": 1138
+      }
+    ],
+    "scoreThreshold": 750
+  },
+  "generatedAt": "2025-12-12T17:36:24.733Z"
+}

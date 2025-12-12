@@ -30,6 +30,15 @@ export const USER_AGENT_STRINGS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:115.0) Gecko/20100101 Firefox/115.0',
 ];
 
+export function normalizeActivityForHostname(name: string): string | null {
+  const cleaned = name
+    .toLowerCase()
+    .replace(/[’'‘`]/g, '')
+    .replace(/\blondon\b/g, '')
+    .replace(/[^a-z0-9]+/g, '');
+  return cleaned.length >= 3 ? cleaned : null;
+}
+
 const bookingPatterns = [
   /datathistle\.com/i,
   /ticketmaster\.co\.uk/i,

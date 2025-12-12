@@ -99,3 +99,13 @@ export interface PageScrapeResult {
   html?: string;
   deepDateTimeData?: RawDateTimeInstance[];
 }
+
+export interface LightScrapeCandidate {
+  url: string;
+  score: number;
+}
+
+export interface OfficialUrlResolutionResult {
+  officialUrl: string | null;
+  lightScrapeCandidates: LightScrapeCandidate[];
+}

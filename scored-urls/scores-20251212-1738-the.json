@@ -1,0 +1,79 @@
+{
+  "eventId": "6a86830f-d726-ded9-3b19-c376002719c1",
+  "eventName": "The Dinosaur That Pooped: A Rock Show!",
+  "pageScores": [
+    {
+      "url": "https://thedinosaurthatpoopedlive.com/",
+      "score": 140
+    }
+  ],
+  "scores": [
+    {
+      "url": "https://thedinosaurthatpoopedlive.com/",
+      "score": 22
+    }
+  ],
+  "deepScrapeUrl": null,
+  "officialUrlResolution": {
+    "summary": "Light-scraped URLs and deep-scrape attempts used before selecting the final official URL.",
+    "finalOfficialUrl": "https://thedinosaurthatpoopedlive.com/",
+    "bestDeepUrl": "https://thedinosaurthatpoopedlive.com/",
+    "bestDeepScore": 1297,
+    "lightScrapedCandidates": [
+      {
+        "label": "Light-scraped candidate 1 (Step 3 scoring)",
+        "url": "https://www.redditchpalacetheatre.co.uk/",
+        "score": 1897
+      },
+      {
+        "label": "Light-scraped candidate 2 (Step 3 scoring)",
+        "url": "https://thedinosaurthatpoopedlive.com/",
+        "score": 1747
+      },
+      {
+        "label": "Light-scraped candidate 3 (Step 3 scoring)",
+        "url": "https://www.visitbrighton.com/whats-on/the-dinosaur-that-pooped-a-rock-show-p2706191",
+        "score": 1344
+      },
+      {
+        "label": "Light-scraped candidate 4 (Step 3 scoring)",
+        "url": "https://whatsonreading.com/venues/hexagon/whats-on/dinosaur-pooped-rock-show",
+        "score": 1338
+      },
+      {
+        "label": "Light-scraped candidate 5 (Step 3 scoring)",
+        "url": "https://www.theatretokens.com/find-a-theatre/nottingham-playhouse-5907",
+        "score": 1104
+      },
+      {
+        "label": "Light-scraped candidate 6 (Step 3 scoring)",
+        "url": "https://www.atgtickets.com/shows/the-dinosaur-that-pooped/richmond-theatre/",
+        "score": 838
+      },
+      {
+        "label": "Light-scraped candidate 7 (Step 3 scoring)",
+        "url": "https://www.instagram.com/p/DQCJynzCCCj/",
+        "score": 471
+      }
+    ],
+    "deepScrapeCandidates": [
+      {
+        "label": "Deep scrape attempt 1 (Step 5 deep crawl)",
+        "url": "https://www.redditchpalacetheatre.co.uk/",
+        "score": null
+      },
+      {
+        "label": "Deep scrape attempt 2 (Step 5 deep crawl)",
+        "url": "https://thedinosaurthatpoopedlive.com/",
+        "score": 1297
+      },
+      {
+        "label": "Deep scrape attempt 3 (Step 5 deep crawl)",
+        "url": "https://www.visitbrighton.com/whats-on/the-dinosaur-that-pooped-a-rock-show-p2706191",
+        "score": null
+      }
+    ],
+    "scoreThreshold": 750
+  },
+  "generatedAt": "2025-12-12T17:38:49.384Z"
+}

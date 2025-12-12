@@ -1,0 +1,69 @@
+{
+  "eventId": "61ef1509-8028-362a-af0f-2a660025c34d",
+  "eventName": "Maddie Moate's Very Curious Christmas",
+  "pageScores": [
+    {
+      "url": "https://nimaxtheatres.com/",
+      "score": 140
+    }
+  ],
+  "scores": [
+    {
+      "url": "https://nimaxtheatres.com/",
+      "score": 122
+    }
+  ],
+  "deepScrapeUrl": null,
+  "officialUrlResolution": {
+    "summary": "Light-scraped URLs and deep-scrape attempts used before selecting the final official URL.",
+    "finalOfficialUrl": "https://nimaxtheatres.com/",
+    "bestDeepUrl": "https://nimaxtheatres.com/shows/maddies-curious-christmas-live-on-stage/",
+    "bestDeepScore": 1221,
+    "lightScrapedCandidates": [
+      {
+        "label": "Light-scraped candidate 1 (Step 3 scoring)",
+        "url": "https://nimaxtheatres.com/shows/maddies-curious-christmas-live-on-stage/",
+        "score": 1531
+      },
+      {
+        "label": "Light-scraped candidate 2 (Step 3 scoring)",
+        "url": "https://www.maddiemoate.com/verycuriouschristmaslive",
+        "score": 1177
+      },
+      {
+        "label": "Light-scraped candidate 3 (Step 3 scoring)",
+        "url": "https://www.familytickets.com/collections/maddie-moate-s-very-curious-christmas?srsltid=AfmBOopGMzJXaLC-gcGNh1HffkWrk3ECREA3yJe4rkZzZZawEUWtMoJ1",
+        "score": 984
+      },
+      {
+        "label": "Light-scraped candidate 4 (Step 3 scoring)",
+        "url": "https://www.westendtheatre.com/245274/shows/maddie-moates-very-curious-christmas-tickets/",
+        "score": 748
+      },
+      {
+        "label": "Light-scraped candidate 5 (Step 3 scoring)",
+        "url": "https://www.londontheatredirect.com/play/maddie-moates-very-curious-christmas-tickets?srsltid=AfmBOoqgZH5bxFaxchNitWvO3RrYKKJXW11YSUMubZWb-tQRySbjtP_V",
+        "score": 694
+      }
+    ],
+    "deepScrapeCandidates": [
+      {
+        "label": "Deep scrape attempt 1 (Step 5 deep crawl)",
+        "url": "https://nimaxtheatres.com/shows/maddies-curious-christmas-live-on-stage/",
+        "score": 1221
+      },
+      {
+        "label": "Deep scrape attempt 2 (Step 5 deep crawl)",
+        "url": "https://www.maddiemoate.com/verycuriouschristmaslive",
+        "score": 1047
+      },
+      {
+        "label": "Deep scrape attempt 3 (Step 5 deep crawl)",
+        "url": "https://www.familytickets.com/collections/maddie-moate-s-very-curious-christmas?srsltid=AfmBOopGMzJXaLC-gcGNh1HffkWrk3ECREA3yJe4rkZzZZawEUWtMoJ1",
+        "score": null
+      }
+    ],
+    "scoreThreshold": 750
+  },
+  "generatedAt": "2025-12-12T17:37:10.820Z"
+}

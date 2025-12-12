@@ -1,0 +1,73 @@
+{
+  "eventId": "e29e825d-1051-0bc0-1661-c296002bdaa1",
+  "eventName": "Christmas Eve Feast at Smiths Bar & Grill",
+  "pageScores": [
+    {
+      "url": "https://www.smithsbarandgrill.co.uk/faqs",
+      "score": 210
+    },
+    {
+      "url": "https://www.smithsbarandgrill.co.uk/",
+      "score": -40
+    }
+  ],
+  "scores": [
+    {
+      "url": "https://www.smithsbarandgrill.co.uk/faqs",
+      "score": 762.5
+    },
+    {
+      "url": "https://www.smithsbarandgrill.co.uk/",
+      "score": 687.5
+    }
+  ],
+  "deepScrapeUrl": null,
+  "officialUrlResolution": {
+    "summary": "Light-scraped URLs used before selecting the final official URL.",
+    "finalOfficialUrl": "https://www.smithsbarandgrill.co.uk/hidden-gems/festiveseason",
+    "lightScrapedCandidates": [
+      {
+        "label": "Light-scraped candidate 1 (Step 3 scoring)",
+        "url": "https://www.smithsbarandgrill.co.uk/hidden-gems/festiveseason",
+        "score": 1744
+      },
+      {
+        "label": "Light-scraped candidate 2 (Step 3 scoring)",
+        "url": "https://www.smithsbarandgrill.co.uk/hidden-gems/christmasday",
+        "score": 1744
+      },
+      {
+        "label": "Light-scraped candidate 3 (Step 3 scoring)",
+        "url": "https://www.smithsbarandgrill.co.uk/",
+        "score": 1687
+      },
+      {
+        "label": "Light-scraped candidate 4 (Step 3 scoring)",
+        "url": "https://www.smithsbarandgrill.co.uk/hidden-gems",
+        "score": 1627
+      },
+      {
+        "label": "Light-scraped candidate 5 (Step 3 scoring)",
+        "url": "https://www.comparetheticketprice.com/event/christmas-eve-feast-at-smith's-bar-&-grill",
+        "score": 1484
+      },
+      {
+        "label": "Light-scraped candidate 6 (Step 3 scoring)",
+        "url": "https://www.coventgarden.london/experience/christmas-in-covent-garden",
+        "score": 1164
+      },
+      {
+        "label": "Light-scraped candidate 7 (Step 3 scoring)",
+        "url": "https://www.salthillpub.com/",
+        "score": 1107
+      },
+      {
+        "label": "Light-scraped candidate 8 (Step 3 scoring)",
+        "url": "https://www.instagram.com/reel/DK_ymI8IihS/",
+        "score": 471
+      }
+    ],
+    "scoreThreshold": 750
+  },
+  "generatedAt": "2025-12-12T20:09:53.288Z"
+}

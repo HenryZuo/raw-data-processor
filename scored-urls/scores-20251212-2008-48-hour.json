@@ -1,0 +1,60 @@
+{
+  "eventId": "ca33f1cb-355e-eefc-1e7b-22760026d8f5",
+  "eventName": "48-Hour Hop on Hop Off London Bus Tour with Thames River Cruise",
+  "pageScores": [
+    {
+      "url": "https://www.hop-on-hop-off-tickets.com/",
+      "score": 140
+    }
+  ],
+  "scores": [
+    {
+      "url": "https://www.hop-on-hop-off-tickets.com/",
+      "score": 108
+    }
+  ],
+  "deepScrapeUrl": null,
+  "officialUrlResolution": {
+    "summary": "Light-scraped URLs used before selecting the final official URL.",
+    "finalOfficialUrl": "https://www.hop-on-hop-off-tickets.com/london-bus-tours/",
+    "lightScrapedCandidates": [
+      {
+        "label": "Light-scraped candidate 1 (Step 3 scoring)",
+        "url": "https://www.hop-on-hop-off-tickets.com/london-bus-tours/",
+        "score": 1744
+      },
+      {
+        "label": "Light-scraped candidate 2 (Step 3 scoring)",
+        "url": "https://london.city-tour.com/en/tickets/hop-on-hop-off",
+        "score": 1741
+      },
+      {
+        "label": "Light-scraped candidate 3 (Step 3 scoring)",
+        "url": "https://londoncitybustours.com/the-original-hop-on-hop-off-london-bus-tour.html",
+        "score": 1597
+      },
+      {
+        "label": "Light-scraped candidate 4 (Step 3 scoring)",
+        "url": "https://topviewtix.com/london/discover-pass-24hours?srsltid=AfmBOoqscBCX3CB56PN_TSQDA_ovHibKxU0lWUNrO87cT7r0SwPgA--4",
+        "score": 1594
+      },
+      {
+        "label": "Light-scraped candidate 5 (Step 3 scoring)",
+        "url": "https://www.londoneye.com/tickets-and-prices/sightseeing-tours/",
+        "score": 1591
+      },
+      {
+        "label": "Light-scraped candidate 6 (Step 3 scoring)",
+        "url": "https://city-sightseeing.com/en/95/london/3286/hop-on-hop-off-london-thames-river-cruise",
+        "score": 1495
+      },
+      {
+        "label": "Light-scraped candidate 7 (Step 3 scoring)",
+        "url": "https://www.tootbus.com/en/london/product/e697bf6d-32a4-4337-9170-1128052485ac",
+        "score": 1338
+      }
+    ],
+    "scoreThreshold": 750
+  },
+  "generatedAt": "2025-12-12T20:08:34.997Z"
+}
