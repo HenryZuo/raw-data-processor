@@ -1,7 +1,9 @@
-import * as chrono from 'chrono-node';
+import { parseChronoDate, parseChronoSegments } from './chrono-wrapper.js';
+import type { ParsedResult } from 'chrono-node';
 import { DAY_LABELS } from './types.js';
 import type {
   DayLabel,
+  JsonLdEvent,
   JsonLdHoursResult,
   PageScrapeResult,
   RawDateTimeInstance,
@@ -9,8 +11,10 @@ import type {
 } from './types.js';
 import type {
   Dates,
+  EventDates,
   Exception as SharedException,
   Location as SharedLocation,
+  PlaceDates,
 } from '../../london-kids-p1/packages/shared/src/activity.js';
 
 export const TIMEOUT_MS = 30_000;
@@ -66,7 +70,7 @@ export const DEBUG_MODE = DEBUG_ENABLED;
 const SCHEDULE_INCLUDE_KEYWORDS =
   /open|close|hours|time|schedule|calendar|visit|operating|session|tour|performance|season|daily|weekly|from.*to|until/i;
 const SCHEDULE_EXCLUDE_PATTERNS =
-  /expire|return|refund|policy|download|link|warranty|cancellation|terms|conditions|faq|privacy|booking|ticket|purchase/i;
+  /expire|return|refund|policy|download|link|warranty|cancellation|terms|conditions|faq|privacy|booking|ticket|purchase|post|mail|discount|\bday\b|working/i;
 
 export function extractRelevantSections(text: string): string[] {
   const lines = text.split(/\r?\n/);
@@ -360,8 +364,8 @@ export function extractDatesAndTimesFromPage(
   const fallbackSegments = defaultSegments.length ? defaultSegments : [cleanText(text)];
 
   const runChrono = (segmentsToParse: string[]) => {
-    const groupedResults = new Map<string, chrono.ParsedResult[]>();
-    const addResults = (segment: string, results: chrono.ParsedResult[]) => {
+    const groupedResults = new Map<string, ParsedResult[]>();
+    const addResults = (segment: string, results: ParsedResult[]) => {
       if (!results.length) return;
       const existing = groupedResults.get(segment) ?? [];
       groupedResults.set(segment, existing.concat(results));
@@ -411,7 +415,7 @@ export function extractDatesAndTimesFromPage(
     }
 
     function normalizeTime(t: string): string {
-      const parsed = chrono.parseDate(t, refDate, { forwardDate: true });
+      const parsed = parseChronoDate(t, refDate);
       if (parsed) {
         return formatTimeFromDate(parsed);
       }
@@ -423,11 +427,11 @@ export function extractDatesAndTimesFromPage(
     }
 
     for (const segment of segmentsToParse) {
-      const results = chrono.parse(segment, refDate, { forwardDate: true });
+      const results = parseChronoSegments(segment, refDate);
       addResults(segment, results);
     }
 
-    const fallbackResults = chrono.parse(text, refDate, { forwardDate: true });
+    const fallbackResults = parseChronoSegments(text, refDate);
     for (const result of fallbackResults) {
       addResults(result.text, [result]);
     }
@@ -607,10 +611,6 @@ export function extractDatesAndTimesFromPage(
   const initialSegments = relevantSections.length ? relevantSections : fallbackSegments;
   let payload = runChrono(initialSegments);
   if (relevantSections.length && payload.source === 'chrono' && (payload.eventInstances?.length ?? 0) < 3) {
-    logWarn(
-      `[LOW CONFIDENCE] Only ${payload.eventInstances?.length ?? 0} chrono instances from focused sections of ${url}`,
-      url,
-    );
     payload = runChrono(fallbackSegments);
   } else if (!relevantSections.length) {
     logWarn(`[LOW CONFIDENCE] No focused schedule sections detected on ${url}`, url);
@@ -910,19 +910,23 @@ export function extractRawDateTimeInstancesFromPage(
 
   const parseFromSegments = (segmentsToParse: string[]) => {
     for (const segment of segmentsToParse) {
-      const results = chrono.parse(segment, referenceDate, { forwardDate: true });
+      const results = parseChronoSegments(segment, referenceDate);
       for (const result of results) {
         const startDate = result.start?.date();
         if (!startDate) continue;
         const iso = ensureIsoDate(startDate);
         if (!iso) continue;
-        const startTime = result.start.isCertain('hour') ? formatTimeFromDate(startDate) : undefined;
-        const endTime = result.end?.date() ? formatTimeFromDate(result.end.date()) : undefined;
+        const rawStartTime = result.start.isCertain('hour') ? formatTimeFromDate(startDate) : undefined;
+        if (!rawStartTime || rawStartTime === '00:00') continue;
+        const rawEnd = result.end?.date();
+        const rawEndTime = rawEnd ? formatTimeFromDate(rawEnd) : undefined;
+        const startTimeValue = rawStartTime;
+        const endTimeValue = rawEndTime && rawEndTime !== '00:00' ? rawEndTime : startTimeValue;
         const keyNote = segment.length > 200 ? `${segment.slice(0, 200)}…` : segment;
         recordInstance({
           date: iso,
-          startTime,
-          endTime,
+          startTime: startTimeValue,
+          endTime: endTimeValue,
           note: keyNote || undefined,
         });
       }
@@ -932,10 +936,6 @@ export function extractRawDateTimeInstancesFromPage(
   const targetSegments = relevantSections.length ? relevantSections : defaultSegments;
   parseFromSegments(targetSegments);
   if (relevantSections.length && instances.length < 3) {
-    logWarn(
-      `[LOW CONFIDENCE] Only ${instances.length} chrono instances parsed from focused sections of ${page.url}`,
-      page.url,
-    );
     parseFromSegments(defaultSegments);
   } else if (!relevantSections.length) {
     logWarn(`[LOW CONFIDENCE] No focused schedule sections detected on ${page.url}`, page.url);
@@ -1364,6 +1364,120 @@ export function extractOpeningHours(pages: PageScrapeResult[]): OpeningHoursExtr
     }
   }
   return { source: 'none' };
+}
+
+function normalizeJsonLdTime(value?: string): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  const explicit = trimmed.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/i);
+  if (explicit) {
+    let hour = Number(explicit[1]);
+    const minute = Number(explicit[2] ?? '0');
+    const period = explicit[3]?.toLowerCase();
+    if (period === 'pm' && hour < 12) {
+      hour += 12;
+    }
+    if (period === 'am' && hour === 12) {
+      hour = 0;
+    }
+    if (hour < 0) hour = 0;
+    if (hour > 23) hour = hour % 24;
+    const paddedHour = hour.toString().padStart(2, '0');
+    const paddedMinute = minute.toString().padStart(2, '0');
+    return `${paddedHour}:${paddedMinute}`;
+  }
+  const parsed = new Date(trimmed);
+  if (!Number.isNaN(parsed.getTime())) {
+    return formatTimeFromDate(parsed);
+  }
+  return null;
+}
+
+function buildPlaceDatesFromJsonLd(
+  jsonLdHours: JsonLdHoursResult | undefined,
+  location: SharedLocation,
+): PlaceDates | null {
+  if (!jsonLdHours?.hours) return null;
+  const openingDays: Partial<Record<DayLabel, { open: string; close: string }>> = {};
+  for (const [dayKey, value] of Object.entries(jsonLdHours.hours)) {
+    if (!value || typeof value !== 'object') continue;
+    const open = 'open' in value ? (value as { open?: string }).open : undefined;
+    const close = 'close' in value ? (value as { close?: string }).close : undefined;
+    if (typeof open === 'string' && typeof close === 'string') {
+      const dayLabel = dayKey as DayLabel;
+      openingDays[dayLabel] = { open, close };
+    }
+  }
+  if (Object.keys(openingDays).length < 4) {
+    return null;
+  }
+  return {
+    kind: 'place',
+    location,
+    openingHours: openingDays as Record<DayLabel, { open: string; close: string }>,
+    exceptions: jsonLdHours.exceptions?.length ? jsonLdHours.exceptions : undefined,
+  };
+}
+
+function buildEventDatesFromJsonLdEvents(
+  events: JsonLdEvent[] | undefined,
+  location?: SharedLocation,
+): { dates: Dates; type: 'event' } | null {
+  if (!events?.length) return null;
+  const uniqueInstances = new Map<string, RawDateTimeInstance>();
+  for (const entry of events) {
+    const status = entry.eventStatus?.toLowerCase();
+    if (status && status.includes('cancel')) continue;
+    const startStamp = entry.startDate;
+    if (!startStamp) continue;
+    const startDate = new Date(startStamp);
+    if (Number.isNaN(startDate.getTime())) continue;
+    const isoDate = ensureIsoDate(startDate);
+    if (!isoDate) continue;
+    const startFromDate = normalizeJsonLdTime(entry.startTime ?? entry.doorTime ?? startStamp);
+    if (!startFromDate || startFromDate === '00:00') continue;
+    const endStamp = entry.endDate;
+    const normalizedEnd =
+      normalizeJsonLdTime(entry.endTime ?? entry.doorTime ?? (endStamp ?? startStamp)) ??
+      startFromDate;
+    const finalEnd = normalizedEnd === '00:00' ? startFromDate : normalizedEnd;
+    const key = `${isoDate}|${startFromDate}|${finalEnd}`;
+    if (uniqueInstances.has(key)) continue;
+    uniqueInstances.set(key, {
+      date: isoDate,
+      startTime: startFromDate,
+      endTime: finalEnd,
+      note: entry.name ? `jsonld event: ${entry.name}` : 'jsonld event',
+    });
+  }
+  if (!uniqueInstances.size) {
+    return null;
+  }
+  const instances = Array.from(uniqueInstances.values()).map((instance) => ({
+    date: instance.date,
+    startTime: instance.startTime ?? instance.endTime ?? '00:00',
+    endTime: instance.endTime ?? instance.startTime ?? '00:00',
+    location: location ?? undefined,
+  }));
+  return {
+    dates: { kind: 'event', instances },
+    type: 'event',
+  };
+}
+
+export function extractStructuredDatesFromPage(
+  page: PageScrapeResult,
+  location: SharedLocation,
+): { dates: Dates; type: 'place' | 'event' } | null {
+  const placeCandidate = buildPlaceDatesFromJsonLd(page.structured.jsonLdHours, location);
+  if (placeCandidate) {
+    return { dates: placeCandidate as Dates, type: 'place' };
+  }
+  const eventCandidate = buildEventDatesFromJsonLdEvents(page.structured.jsonLdEvents, location);
+  if (eventCandidate) {
+    return eventCandidate;
+  }
+  return null;
 }
 
 export function addMinutesToTime(time: string, minutesToAdd: number): string {

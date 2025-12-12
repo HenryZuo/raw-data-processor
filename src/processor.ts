@@ -431,6 +431,12 @@ export async function processEvents(events: SourceEvent[], groqApiKey: string) {
       // ignore invalid URL
     }
     const result = await getOfficialUrlAndContent(startUrl, event.name, USER_AGENT_STRINGS, location);
+    logDebug(
+      `preClassifiedType=${result.preClassifiedType ?? 'null'} preExtractedDates=${JSON.stringify(
+        result.preExtractedDates ?? null,
+      )}`,
+      event.event_id,
+    );
     await exportScoredUrls(event.event_id, event.name, result.scoredUrls, result.scores, result.deepScrapeUrl);
 
     if (!result.allScrapedPages.length) {
@@ -459,16 +465,17 @@ export async function processEvents(events: SourceEvent[], groqApiKey: string) {
       });
       continue;
     }
-    if (!result.preExtractedDates) {
+    if (!result.preClassifiedType || !result.preExtractedDates) {
       setTaskStatus(statuses, 2, 'fail', 'no valid dates/times extracted');
+      logWarn(
+        'Excluding activity: no valid dates or times could be extracted (neither place hours nor event instances)',
+        event.event_id,
+      );
+      skipped.push({
+        id: event.event_id,
+        reason: 'no date/time information available',
+      });
       logAndContinue();
-      skipped.push({ id: event.event_id, reason: 'no valid dates/times extracted' });
-      continue;
-    }
-    if (!result.preClassifiedType) {
-      setTaskStatus(statuses, 2, 'fail', 'no classification from scraped data');
-      logAndContinue();
-      skipped.push({ id: event.event_id, reason: 'No clear type classification from scraped data' });
       continue;
     }
     if (result.dateTimePage && result.preClassifiedType === 'place') {

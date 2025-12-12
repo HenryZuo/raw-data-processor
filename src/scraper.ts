@@ -6,12 +6,14 @@ import {
   extractCalendarExceptionsFromText,
   extractDatesAndTimesFromPage,
   extractOpeningHours,
+  extractStructuredDatesFromPage,
   hasActualTimeInfo,
   classifyDateTimeFormat,
   extractRawDateTimeInstancesFromPage,
   parseAndClassifyDates,
   normalizeCalendarApiPayload,
   logDebug,
+  logWarn,
   isUrlValidAndHtml,
   quickPreScoreUrl,
   generateSmartHoursGuesses,
@@ -20,7 +22,7 @@ import {
 } from './utils.js';
 import { normalizeActivityForHostname } from './url-resolver.js';
 import { DAY_LABELS } from './types.js';
-import type { DayLabel, JsonLdHoursResult, PageScrapeResult, RawDateTimeInstance } from './types.js';
+import type { DayLabel, JsonLdEvent, JsonLdHoursResult, PageScrapeResult, RawDateTimeInstance } from './types.js';
 import type {
   Dates,
   Exception as SharedException,
@@ -681,10 +683,11 @@ async function scrapeSinglePage(url: string, userAgents: string[]): Promise<Scra
         extractedPrice: '',
         extractedDescription: '',
         jsonLdHours: undefined,
+        jsonLdEvents: [],
       };
 
       const assignIfEmpty = (
-        field: Exclude<keyof PageScrapeResult['structured'], 'jsonLdHours'>,
+        field: Exclude<keyof PageScrapeResult['structured'], 'jsonLdHours' | 'jsonLdEvents'>,
         value?: string,
       ) => {
         if (!value) return;
@@ -786,7 +789,29 @@ async function scrapeSinglePage(url: string, userAgents: string[]): Promise<Scra
       );
 
       let jsonLdHours: JsonLdHoursResult | undefined;
+      const jsonLdEvents: JsonLdEvent[] = [];
       for (const entry of jsonLdEntriesFromHtml) {
+        const rawType = entry['@type'];
+        const typeCandidates: string[] = [];
+        if (Array.isArray(rawType)) {
+          for (const candidate of rawType) {
+            if (typeof candidate === 'string') {
+              typeCandidates.push(candidate.toLowerCase());
+            }
+          }
+        } else if (typeof rawType === 'string') {
+          typeCandidates.push(rawType.toLowerCase());
+        }
+        if (typeCandidates.some((value) => value.includes('event'))) {
+          jsonLdEvents.push({
+            startDate: typeof entry.startDate === 'string' ? entry.startDate : undefined,
+            endDate: typeof entry.endDate === 'string' ? entry.endDate : undefined,
+            startTime: typeof entry.startTime === 'string' ? entry.startTime : undefined,
+            doorTime: typeof entry.doorTime === 'string' ? entry.doorTime : undefined,
+            eventStatus: typeof entry.eventStatus === 'string' ? entry.eventStatus : undefined,
+            name: typeof entry.name === 'string' ? entry.name : undefined,
+          });
+        }
         const rawSpec = entry.openingHoursSpecification ?? entry.openingHours;
         if (!rawSpec) continue;
         const specArray = Array.isArray(rawSpec) ? rawSpec : [rawSpec];
@@ -798,6 +823,7 @@ async function scrapeSinglePage(url: string, userAgents: string[]): Promise<Scra
         }
       }
 
+      structured.jsonLdEvents = jsonLdEvents;
       structured.jsonLdHours = jsonLdHours;
 
       if (jsonLdHours && !structured.extractedHours) {
@@ -1424,8 +1450,29 @@ export async function getOfficialUrlAndContent(
   };
   let finalDeepScrapeUrl: string | null = null;
 
-  for (const candidate of candidateList) {
-    const pageResult = candidate.page;
+  const topCandidates = candidateList.slice(0, 3);
+  for (const candidate of topCandidates) {
+    let pageResult = candidate.page;
+    if (!pageResult) {
+      const extra = await scrapeSinglePage(candidate.url, userAgents);
+      if (!extra) {
+        logWarn(
+          `[${activityName}] Unable to rescrape ${candidate.url}; skipping to next candidate`,
+          activityName,
+        );
+        continue;
+      }
+      addCandidate(extra);
+      pageResult = extra.page;
+    }
+
+    const structured = extractStructuredDatesFromPage(pageResult, location);
+    if (structured) {
+      dateTimePage = pageResult;
+      winningClassification = { dates: structured.dates, type: structured.type };
+      break;
+    }
+
     const calendarResult = extractCalendarExceptionsFromText(pageResult.text);
     if (
       calendarResult.exceptions.length >= 5 &&
@@ -1435,13 +1482,14 @@ export async function getOfficialUrlAndContent(
       const placeDates: PlaceDates = {
         kind: 'place',
         location,
-        openingHours: calendarResult.openingHours,
+        openingHours: calendarResult.openingHours as Record<DayLabel, { open: string; close: string }>,
         exceptions: calendarResult.exceptions,
       };
       dateTimePage = pageResult;
       winningClassification = { dates: placeDates, type: 'place' };
       break;
     }
+
     let instances = extractRawDateTimeInstancesFromPage(pageResult, undefined, {
       jsonLdHours: pageResult.structured.jsonLdHours,
     });
@@ -1470,6 +1518,11 @@ export async function getOfficialUrlAndContent(
       winningClassification = classification;
       break;
     }
+
+    logWarn(
+      `[${activityName}] Extraction insufficient on ${candidate.url} (score ${candidate.score}); trying next`,
+      activityName,
+    );
   }
 
   const generalCandidates = buildSortedResults();
@@ -1574,6 +1627,7 @@ async function deepScrapeDynamicDateTime(url: string, userAgents: string[]): Pro
         extractedPrice: '',
         extractedDescription: '',
         jsonLdHours: undefined,
+        jsonLdEvents: [],
       };
 
       const aggregated = new Map<string, RawDateTimeInstance>();

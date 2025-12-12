@@ -8,6 +8,16 @@ export interface JsonLdHoursResult {
   exceptions?: SharedException[];
 }
 
+export interface JsonLdEvent {
+  startDate?: string;
+  endDate?: string;
+  startTime?: string;
+  doorTime?: string;
+  eventStatus?: string;
+  name?: string;
+  endTime?: string;
+}
+
 export interface SourceLink {
   url: string;
   type?: string;
@@ -83,6 +93,7 @@ export interface PageScrapeResult {
     extractedPrice?: string;
     extractedDescription?: string;
     jsonLdHours?: JsonLdHoursResult;
+    jsonLdEvents?: JsonLdEvent[];
   };
   html?: string;
   deepDateTimeData?: RawDateTimeInstance[];
